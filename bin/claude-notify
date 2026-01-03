@@ -1,0 +1,67 @@
+#!/bin/bash
+# claude-notify - Notification handler for Claude Code hooks
+
+# Enable/disable Slack notifications (defaults to true)
+CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
+
+# Parse command line arguments
+sender=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --sender)
+            sender="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+# Read JSON from stdin
+json=$(cat)
+
+# Get tmux info if available
+if [[ -n "$TMUX" ]]; then
+    tmux_info=$(tmux display-message -p '#T (#S:#{window_index}.#{pane_index})')
+else
+    tmux_info="Session"
+fi
+
+# Send notification
+send_notification() {
+    local title="$1"
+    local message="$2"
+    local slack_header="${3:-$title}"
+    local slack_body="${4:-$message}"
+
+    # Only check if iTerm2 is frontmost when --sender com.googlecode.iterm2 is passed
+    if [[ "$sender" == "com.googlecode.iterm2" ]]; then
+        local frontmost_app=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')
+        if [[ "$frontmost_app" != "iTerm2" ]]; then
+            terminal-notifier -title "$title" -message "$message"
+        fi
+    else
+        terminal-notifier -title "$title" -message "$message"
+    fi
+
+    # Send Slack notification if enabled (header + newlines + body)
+    if [[ "$CLAUDE_NOTIFY_SLACK" == "true" ]]; then
+        slack-noti "$slack_header"$'\n\n'"$slack_body"
+    fi
+}
+
+# Check if this is a notification with title/message or a stop hook
+if echo "$json" | jq -e '.title and .message' >/dev/null 2>&1; then
+    # Notification payload
+    title=$(echo "$json" | jq -r '.title')
+    body=$(echo "$json" | jq -r '.message')
+    header="$title: $tmux_info"
+    send_notification "$title" "$tmux_info: $body" "$header" "$body"
+else
+    # Stop hook payload
+    header="Claude Code Stopped: $tmux_info"
+    body="Ready for further instruction."
+    send_notification "Claude Code Stopped" "$tmux_info is ready for further instruction." "$header" "$body"
+fi
