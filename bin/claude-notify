@@ -4,6 +4,10 @@
 # Enable/disable Slack notifications (defaults to true)
 CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
 
+# Deduplication: skip if same message sent within this many seconds
+DEDUPE_WINDOW=30
+DEDUPE_FILE="$HOME/.claude/manager/notify-last"
+
 # Parse command line arguments
 sender=""
 while [[ $# -gt 0 ]]; do
@@ -29,6 +33,29 @@ else
     tmux_info="Session"
 fi
 
+# Check for duplicate Slack messages
+is_duplicate_slack() {
+    local msg="$1"
+    local msg_hash=$(echo -n "$tmux_info:$msg" | md5 -q)
+    local now=$(date +%s)
+
+    mkdir -p "$(dirname "$DEDUPE_FILE")"
+
+    if [[ -f "$DEDUPE_FILE" ]]; then
+        local last_hash=$(head -1 "$DEDUPE_FILE")
+        local last_time=$(tail -1 "$DEDUPE_FILE")
+
+        if [[ "$msg_hash" == "$last_hash" ]] && [[ $((now - last_time)) -lt $DEDUPE_WINDOW ]]; then
+            return 0  # is duplicate
+        fi
+    fi
+
+    # Save this message
+    echo "$msg_hash" > "$DEDUPE_FILE"
+    echo "$now" >> "$DEDUPE_FILE"
+    return 1  # not duplicate
+}
+
 # Send notification
 send_notification() {
     local title="$1"
@@ -46,9 +73,12 @@ send_notification() {
         terminal-notifier -title "$title" -message "$message"
     fi
 
-    # Send Slack notification if enabled (header + newlines + body)
+    # Send Slack notification if enabled (with deduplication)
     if [[ "$CLAUDE_NOTIFY_SLACK" == "true" ]]; then
-        slack-noti "$slack_header"$'\n\n'"$slack_body"
+        local full_msg="$slack_header"$'\n\n'"$slack_body"
+        if ! is_duplicate_slack "$full_msg"; then
+            slack-noti "$full_msg"
+        fi
     fi
 }
 
