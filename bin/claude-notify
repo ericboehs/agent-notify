@@ -24,7 +24,7 @@ json=$(cat)
 
 # Get tmux info if available
 if [[ -n "$TMUX" ]]; then
-    tmux_info=$(tmux display-message -p '#T (#S:#{window_index}.#{pane_index})')
+    tmux_info=$(tmux display-message -p '#S:#{window_index}.#{pane_index}')
 else
     tmux_info="Session"
 fi
@@ -57,11 +57,11 @@ if echo "$json" | jq -e '.title and .message' >/dev/null 2>&1; then
     # Notification payload
     title=$(echo "$json" | jq -r '.title')
     body=$(echo "$json" | jq -r '.message')
-    header="$title: $tmux_info"
+    header=":claude: $tmux_info"
     send_notification "$title" "$tmux_info: $body" "$header" "$body"
 else
     # Stop hook payload
-    header="Claude Code Stopped: $tmux_info"
+    header=":claude: $tmux_info"
     body="Ready for further instruction."
     send_notification "Claude Code Stopped" "$tmux_info is ready for further instruction." "$header" "$body"
 fi
