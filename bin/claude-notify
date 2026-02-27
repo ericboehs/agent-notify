@@ -2,7 +2,10 @@
 # claude-notify - Notification handler for Claude Code hooks
 
 # Enable/disable Slack notifications (defaults to true)
+# CLAUDE_NOTIFY_SLACK=false        - never send Slack notifications
+# CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=true - only send when display is asleep (AFK)
 CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
+CLAUDE_NOTIFY_SLACK_SLEEP_ONLY="${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}"
 
 # Deduplication: skip if same message sent within this many seconds
 DEDUPE_WINDOW=30
@@ -56,6 +59,18 @@ is_duplicate_slack() {
     return 1  # not duplicate
 }
 
+# Check if the display is asleep (Apple Silicon compatible)
+is_display_asleep() {
+    python3 -c "
+import ctypes, ctypes.util
+cg = ctypes.cdll.LoadLibrary(ctypes.util.find_library('CoreGraphics'))
+cg.CGMainDisplayID.restype = ctypes.c_uint32
+cg.CGDisplayIsAsleep.restype = ctypes.c_int
+cg.CGDisplayIsAsleep.argtypes = [ctypes.c_uint32]
+exit(0 if cg.CGDisplayIsAsleep(cg.CGMainDisplayID()) else 1)
+" 2>/dev/null
+}
+
 # Send notification
 send_notification() {
     local title="$1"
@@ -74,10 +89,20 @@ send_notification() {
     fi
 
     # Send Slack notification if enabled (with deduplication)
+    # CLAUDE_NOTIFY_SLACK=false disables all Slack notifications
+    # CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=true only sends when display is asleep
     if [[ "$CLAUDE_NOTIFY_SLACK" == "true" ]]; then
-        local full_msg="$slack_header"$'\n\n'"$slack_body"
-        if ! is_duplicate_slack "$full_msg"; then
-            slack-noti "$full_msg"
+        local should_send=true
+        if [[ "$CLAUDE_NOTIFY_SLACK_SLEEP_ONLY" == "true" ]]; then
+            if ! is_display_asleep; then
+                should_send=false
+            fi
+        fi
+        if [[ "$should_send" == "true" ]]; then
+            local full_msg="$slack_header"$'\n\n'"$slack_body"
+            if ! is_duplicate_slack "$full_msg"; then
+                slack-noti "$full_msg"
+            fi
         fi
     fi
 }
