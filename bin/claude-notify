@@ -29,8 +29,13 @@ done
 # Read JSON from stdin
 json=$(cat)
 
-# Get tmux info if available
-if [[ -n "$TMUX" ]]; then
+# Get tmux info if available. Anchor to $TMUX_PANE — the pane THIS Claude process
+# runs in (inherited by the hook) — not the active/focused pane. Without -t,
+# display-message reports whichever pane is focused, so a notification from an
+# unfocused pane would be mis-tagged (e.g. code:2.0 posted as code:1.0).
+if [[ -n "$TMUX_PANE" ]]; then
+    tmux_info=$(tmux display-message -t "$TMUX_PANE" -p '#S:#{window_index}.#{pane_index}')
+elif [[ -n "$TMUX" ]]; then
     tmux_info=$(tmux display-message -p '#S:#{window_index}.#{pane_index}')
 else
     tmux_info="Session"
