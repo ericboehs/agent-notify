@@ -112,6 +112,42 @@ send_notification() {
     fi
 }
 
+# AskUserQuestion (PreToolUse hook): Claude is waiting on the user to choose.
+# Post the actual question(s) and numbered options so they can be seen while AFK
+# and answered in the pane's :claude: thread (watch-slack routes the reply back).
+if [[ "$(echo "$json" | jq -r '.tool_name // empty')" == "AskUserQuestion" ]]; then
+    body=$(echo "$json" | jq -r '
+        .tool_input.questions[]? as $q
+        | "*\($q.header // "Question")*\(if $q.multiSelect then " (choose any)" else "" end): \($q.question)"
+          + ( [ $q.options | to_entries[]
+                | "\n  \(.key + 1). \(.value.label)"
+                  + (if (.value.description // "") != "" then " — \(.value.description)" else "" end)
+              ] | join("") )
+    ' 2>/dev/null)
+    [[ -z "$body" ]] && body="Claude is asking for your input."
+    header=":claude: $tmux_info"
+    send_notification "Claude needs your input" "$tmux_info needs your input" "$header" "$body"
+    exit 0
+fi
+
+# Notification event (a permission/approval prompt, or an idle "waiting for your
+# input" nudge). Claude Code fires this with a ready-made human-readable .message
+# but no .title — handle it before the title+message check so it doesn't fall
+# through to the generic Stop path.
+if [[ "$(echo "$json" | jq -r '.hook_event_name // empty')" == "Notification" ]]; then
+    body=$(echo "$json" | jq -r '.message // "Claude needs your attention."')
+    # Skip the idle "waiting for your input" nudge: it fires ~60s after the agent
+    # stops (already covered by the Stop hook) and is just noise. Only surface
+    # actionable notifications like permission/approval prompts.
+    lc=$(echo "$body" | tr '[:upper:]' '[:lower:]')
+    case "$lc" in
+        *"waiting for your input"*) exit 0 ;;
+    esac
+    header=":claude: $tmux_info"
+    send_notification "Claude needs your attention" "$tmux_info: $body" "$header" "$body"
+    exit 0
+fi
+
 # Check if this is a notification with title/message or a stop hook
 if echo "$json" | jq -e '.title and .message' >/dev/null 2>&1; then
     # Notification payload
