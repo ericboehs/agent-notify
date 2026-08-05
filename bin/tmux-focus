@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Focus a tmux pane from outside tmux: point a client at it, then bring the
+# terminal app forward.
+#
+# Usage: tmux-focus SESSION:WINDOW.PANE [APP]
+#
+# Used as terminal-notifier's -execute action so clicking a Claude Code
+# notification lands on the pane that sent it, instead of doing nothing.
+
+set -uo pipefail
+
+target=${1:-}
+app=${2:-Ghostty}
+[ -n "$target" ] || exit 0
+
+session=${target%%:*}
+window=${target%.*}  # select-window rejects the .pane suffix
+
+# Notification Center spawns this with a bare PATH, so Homebrew is not on it.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+command -v tmux >/dev/null 2>&1 || exit 0
+tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+# Prefer a client already showing this session, so a click never yanks an
+# unrelated window off whatever it was on; otherwise take the most recently
+# active client. Delimit with | because session names may contain spaces.
+client=$(tmux list-clients -F '#{client_activity}|#{client_session}|#{client_tty}' |
+  sort -rn | awk -F'|' -v s="$session" '$2 == s { print $3; exit }')
+[ -n "$client" ] || client=$(tmux list-clients -F '#{client_activity}|#{client_tty}' |
+  sort -rn | awk -F'|' 'NR == 1 { print $2 }')
+
+# Without -c there is no current client to infer, so it would pick arbitrarily.
+[ -n "$client" ] && tmux switch-client -c "$client" -t "=$session"
+tmux select-window -t "$window"
+tmux select-pane -t "$target"
+
+open -a "$app"

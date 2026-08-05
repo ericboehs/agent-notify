@@ -6,6 +6,12 @@
 # CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=true - only send when display is asleep (AFK)
 CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
 CLAUDE_NOTIFY_SLACK_SLEEP_ONLY="${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}"
+# Terminal app to raise when a desktop notification is clicked
+CLAUDE_NOTIFY_TERMINAL="${CLAUDE_NOTIFY_TERMINAL:-Ghostty}"
+
+# Resolve tmux-focus alongside this script; the notification click action runs
+# with a bare PATH, and this file is normally reached through a ~/bin symlink.
+TMUX_FOCUS=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/tmux-focus
 
 # Deduplication: skip if same message sent within this many seconds
 DEDUPE_WINDOW=30
@@ -40,6 +46,12 @@ elif [[ -n "$TMUX" ]]; then
 else
     tmux_info="Session"
 fi
+
+# Keep a copy of the raw target for the notification click action, before any
+# cosmetic labelling is applied to tmux_info. Empty means "not in tmux", so
+# there is nothing to click through to.
+tmux_target=""
+[[ "$tmux_info" != "Session" ]] && tmux_target="$tmux_info"
 
 # Check for duplicate Slack messages
 is_duplicate_slack() {
@@ -83,14 +95,26 @@ send_notification() {
     local slack_header="${3:-$title}"
     local slack_body="${4:-$message}"
 
+    # Clicking a banner should land on the pane that sent it. -execute runs on
+    # click (the default is to do nothing at all), and -group makes a repeat
+    # notification from the same pane replace the previous one rather than
+    # stacking up in Notification Center.
+    local -a notifier_args=(-title "$title" -message "$message")
+    if [[ -n "$tmux_target" ]]; then
+        notifier_args+=(
+            -execute "$(printf '%q %q %q' "$TMUX_FOCUS" "$tmux_target" "$CLAUDE_NOTIFY_TERMINAL")"
+            -group "claude-$tmux_target"
+        )
+    fi
+
     # Only check if iTerm2 is frontmost when --sender com.googlecode.iterm2 is passed
     if [[ "$sender" == "com.googlecode.iterm2" ]]; then
         local frontmost_app=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')
         if [[ "$frontmost_app" != "iTerm2" ]]; then
-            terminal-notifier -title "$title" -message "$message"
+            terminal-notifier "${notifier_args[@]}"
         fi
     else
-        terminal-notifier -title "$title" -message "$message"
+        terminal-notifier "${notifier_args[@]}"
     fi
 
     # Send Slack notification if enabled (with deduplication)
