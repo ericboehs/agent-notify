@@ -4,6 +4,9 @@
 # Enable/disable Slack notifications (defaults to true)
 # CLAUDE_NOTIFY_SLACK=false        - never send Slack notifications
 # CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=true - only send when display is asleep (AFK)
+# CLAUDE_NOTIFY_HOST=gfe            - prefix the pane label (e.g. ":claude: gfe:code:1.0")
+#                                    to distinguish this machine from others sharing the
+#                                    same #notifications channel. Unset = no prefix.
 CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
 CLAUDE_NOTIFY_SLACK_SLEEP_ONLY="${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}"
 # Terminal app to raise when a desktop notification is clicked
@@ -52,6 +55,13 @@ fi
 # there is nothing to click through to.
 tmux_target=""
 [[ "$tmux_info" != "Session" ]] && tmux_target="$tmux_info"
+
+# Optional per-machine label so notifications from different hosts are
+# distinguishable in a shared #notifications channel (e.g. "gfe:code:1.0").
+# Baked into tmux_info so the header, desktop message, and dedup hash all agree.
+if [[ -n "$CLAUDE_NOTIFY_HOST" ]]; then
+    tmux_info="${CLAUDE_NOTIFY_HOST}:${tmux_info}"
+fi
 
 # Check for duplicate Slack messages
 is_duplicate_slack() {
