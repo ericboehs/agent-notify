@@ -11,10 +11,30 @@ CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
 CLAUDE_NOTIFY_SLACK_SLEEP_ONLY="${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}"
 # Terminal app to raise when a desktop notification is clicked
 CLAUDE_NOTIFY_TERMINAL="${CLAUDE_NOTIFY_TERMINAL:-Ghostty}"
+# Thumbnail drawn on the right of the banner. The banner icon says which terminal
+# (Ghostty), so this says which *kind* of prompt: Claude's glyph by default, a
+# question mark for AskUserQuestion, 1Password's when claude-1p-notify overrides
+# it. .icns is accepted as-is.
+#
+# Whether the caller picked one has to be recorded before defaulting, so the
+# per-event overrides further down can tell "unset" from "deliberately chosen"
+# and leave claude-1p-notify's 1Password icon alone. The `-` (not `:-`) default
+# then means CLAUDE_NOTIFY_IMAGE= drops the thumbnail entirely, and a missing
+# file is skipped at send time rather than erroring.
+CLAUDE_NOTIFY_IMAGE_SET="${CLAUDE_NOTIFY_IMAGE+1}"
+CLAUDE_NOTIFY_IMAGE="${CLAUDE_NOTIFY_IMAGE-/Applications/Claude.app/Contents/Resources/electron.icns}"
 
 # Resolve tmux-focus alongside this script; the notification click action runs
 # with a bare PATH, and this file is normally reached through a ~/bin symlink.
 TMUX_FOCUS=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/tmux-focus
+
+# macOS draws the banner's icon and name from the bundle that posted it, so
+# posting through our own copy of terminal-notifier.app (built by
+# claude-notify-app, carrying the terminal's icon) is what turns the generic
+# Terminal icon into Ghostty's. Fall back to the plain CLI if it isn't built.
+NOTIFIER_APP="$HOME/Applications/${CLAUDE_NOTIFY_APP_NAME:-Claude Code} Notify.app"
+NOTIFIER="$NOTIFIER_APP/Contents/MacOS/terminal-notifier"
+[[ -x "$NOTIFIER" ]] || NOTIFIER="terminal-notifier"
 
 # Deduplication: skip if same message sent within this many seconds
 DEDUPE_WINDOW=30
@@ -110,6 +130,7 @@ send_notification() {
     # notification from the same pane replace the previous one rather than
     # stacking up in Notification Center.
     local -a notifier_args=(-title "$title" -message "$message")
+    [[ -f "$CLAUDE_NOTIFY_IMAGE" ]] && notifier_args+=(-contentImage "$CLAUDE_NOTIFY_IMAGE")
     if [[ -n "$tmux_target" ]]; then
         notifier_args+=(
             -execute "$(printf '%q %q %q' "$TMUX_FOCUS" "$tmux_target" "$CLAUDE_NOTIFY_TERMINAL")"
@@ -121,10 +142,10 @@ send_notification() {
     if [[ "$sender" == "com.googlecode.iterm2" ]]; then
         local frontmost_app=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')
         if [[ "$frontmost_app" != "iTerm2" ]]; then
-            terminal-notifier "${notifier_args[@]}"
+            "$NOTIFIER" "${notifier_args[@]}"
         fi
     else
-        terminal-notifier "${notifier_args[@]}"
+        "$NOTIFIER" "${notifier_args[@]}"
     fi
 
     # Send Slack notification if enabled (with deduplication)
@@ -159,6 +180,11 @@ if [[ "$(echo "$json" | jq -r '.tool_name // empty')" == "AskUserQuestion" ]]; t
               ] | join("") )
     ' 2>/dev/null)
     [[ -z "$body" ]] && body="Claude is asking for your input."
+    # This one is blocked on an answer, not just finished — a question mark
+    # separates it from a Stop banner without having to read the text. Only
+    # overrides the default, so an explicit CLAUDE_NOTIFY_IMAGE still wins.
+    question_icon="$NOTIFIER_APP/Contents/Resources/question.png"
+    [[ -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" && -f "$question_icon" ]] && CLAUDE_NOTIFY_IMAGE="$question_icon"
     header=":claude: $tmux_info"
     send_notification "Claude needs your input" "$tmux_info needs your input" "$header" "$body"
     exit 0

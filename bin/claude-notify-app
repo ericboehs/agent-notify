@@ -1,0 +1,74 @@
+#!/bin/bash
+# claude-notify-app - (re)build the branded notifier app bundle used by claude-notify
+#
+# macOS takes a notification's icon and name from the bundle that posted it, and
+# ignores terminal-notifier's -appIcon. terminal-notifier's own -sender flag can
+# borrow another app's identity, but it keeps the process alive waiting for a
+# click, which would hang a hook. So instead we keep a private copy of
+# terminal-notifier.app carrying the terminal's icon and its own bundle id.
+#
+# Re-run this after `brew upgrade terminal-notifier` or to switch terminals:
+#   CLAUDE_NOTIFY_TERMINAL=iTerm claude-notify-app
+#
+# The first notification from the rebuilt bundle triggers a macOS authorization
+# prompt ("Claude Code" Notifications) - allow it, or the banners stay silent.
+
+set -e
+
+CLAUDE_NOTIFY_TERMINAL="${CLAUDE_NOTIFY_TERMINAL:-Ghostty}"
+APP_NAME="${CLAUDE_NOTIFY_APP_NAME:-Claude Code}"
+BUNDLE_ID="${CLAUDE_NOTIFY_BUNDLE_ID:-com.ericboehs.claude-notify}"
+DEST="$HOME/Applications/$APP_NAME Notify.app"
+
+# Locate the Homebrew terminal-notifier bundle via its CLI symlink:
+# <prefix>/bin/terminal-notifier -> <cellar>/bin/terminal-notifier, and the app
+# sits one level above that bin directory.
+notifier_bin=$(command -v terminal-notifier) || {
+    echo "terminal-notifier not found - brew install terminal-notifier" >&2
+    exit 1
+}
+notifier_bin=$(readlink -f "$notifier_bin" 2>/dev/null || echo "$notifier_bin")
+SRC="$(dirname "$(dirname "$notifier_bin")")/terminal-notifier.app"
+[[ -d "$SRC" ]] || { echo "terminal-notifier.app not found at $SRC" >&2; exit 1; }
+
+# Pull the icon out of the terminal we want the notifications to look like.
+TERM_APP="/Applications/$CLAUDE_NOTIFY_TERMINAL.app"
+[[ -d "$TERM_APP" ]] || TERM_APP="$HOME/Applications/$CLAUDE_NOTIFY_TERMINAL.app"
+[[ -d "$TERM_APP" ]] || { echo "$CLAUDE_NOTIFY_TERMINAL.app not found" >&2; exit 1; }
+icon=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$TERM_APP/Contents/Info.plist" 2>/dev/null)
+icon="${icon%.icns}"
+ICNS="$TERM_APP/Contents/Resources/$icon.icns"
+[[ -f "$ICNS" ]] || { echo "No icon found at $ICNS" >&2; exit 1; }
+
+mkdir -p "$HOME/Applications"
+rm -rf "$DEST"
+cp -R "$SRC" "$DEST"
+
+# Swap in the terminal's icon and claim a distinct identity, so this shows up as
+# its own entry in System Settings > Notifications rather than as
+# "terminal-notifier".
+rm -f "$DEST/Contents/Resources/"*.icns
+cp "$ICNS" "$DEST/Contents/Resources/$icon.icns"
+plist="$DEST/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile $icon" "$plist"
+
+# Thumbnail for the AskUserQuestion path, so a banner that needs an *answer*
+# reads differently from one that is merely done. Rendered into the bundle (and
+# so before the re-sign below) to keep it alongside the icon it ships with.
+RENDER="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/render-symbol.js"
+if [[ -f "$RENDER" ]]; then
+    osascript -l JavaScript "$RENDER" \
+        questionmark.circle.fill "$DEST/Contents/Resources/question.png" D97757 >/dev/null 2>&1 ||
+        echo "  note: question thumbnail failed to render; those banners keep the default one"
+fi
+
+# Editing the bundle invalidates Homebrew's signature; an ad-hoc re-sign is
+# enough for LaunchServices to accept it.
+codesign --force --deep --sign - "$DEST" >/dev/null 2>&1
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST"
+
+echo "Built $DEST"
+echo "  icon:      $ICNS"
+echo "  bundle id: $BUNDLE_ID"
