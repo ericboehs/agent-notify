@@ -1,6 +1,10 @@
 #!/bin/bash
 # claude-notify - Notification handler for Claude Code hooks
 
+# Hooks inherit Claude's PATH, but --recv runs as an ssh forced command, which
+# gets a bare one — no ~/bin (slack-noti) and no Homebrew (jq, tmux).
+export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 # Enable/disable Slack notifications (defaults to true)
 # CLAUDE_NOTIFY_SLACK=false        - never send Slack notifications
 # CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=true - only send when display is asleep (AFK)
@@ -125,17 +129,20 @@ claude_ai_title() {
 # hence the file the login shell drops per tty, read through whichever client is
 # attached right now.
 origin_pane() {
-    local session tty
+    local session tty origin
 
-    [[ -n "${LC_CLAUDE_PANE:-}" ]] && { echo "$LC_CLAUDE_PANE"; return; }
-    [[ -n "${TMUX_PANE:-}" ]] || return
+    # Inside a tmux here, the attached client is the only current answer: the
+    # session outlives connections, so the LC_CLAUDE_PANE its panes inherited
+    # names whichever pane happened to start the server, possibly days ago.
+    if [[ -n "${TMUX_PANE:-}" ]]; then
+        session=$(tmux display-message -t "$TMUX_PANE" -p '#{session_name}' 2>/dev/null)
+        tty=$(tmux list-clients -t "$session" -F '#{client_activity}|#{client_tty}' 2>/dev/null |
+            sort -rn | head -1 | cut -d'|' -f2)
+        [[ -n "$tty" ]] && origin=$(cat "$HOME/.claude/origin/${tty//\//-}" 2>/dev/null)
+    fi
 
-    session=$(tmux display-message -t "$TMUX_PANE" -p '#{session_name}' 2>/dev/null) || return
-    tty=$(tmux list-clients -t "$session" -F '#{client_activity}|#{client_tty}' 2>/dev/null |
-        sort -rn | head -1 | cut -d'|' -f2)
-    [[ -n "$tty" ]] || return
-
-    cat "$HOME/.claude/origin/${tty//\//-}" 2>/dev/null
+    # Straight into the ssh session with no tmux, and the environment is right.
+    echo "${origin:-${LC_CLAUDE_PANE:-}}"
 }
 
 # Get tmux info if available. Anchor to $TMUX_PANE — the pane THIS Claude process
@@ -250,6 +257,23 @@ exit(0 if cg.CGDisplayIsAsleep(cg.CGMainDisplayID()) else 1)
 " 2>/dev/null
 }
 
+# slack-noti wants the webhook in its environment, and --recv has no environment
+# to speak of: an ssh forced command reaches neither the GUI session's launchd
+# variables nor the login keychain fnox keeps them in. Copying the secret to disk
+# — or onto coop — to fix that is far more than a notification is worth. The tmux
+# server does have it, having been started from a login shell in the GUI session,
+# so hand it the post and let it supply the environment.
+slack_post() {
+    local msg="$1"
+
+    if [[ -n "${BOEHS_SLACK_NOTI_HOOK:-}" ]]; then
+        slack-noti "$msg"
+    elif command -v tmux >/dev/null 2>&1 && tmux has-session 2>/dev/null; then
+        # -b so a slow webhook never holds up the hook that is waiting on us.
+        tmux run-shell -b "$(printf '%q %q' "$HOME/bin/slack-noti" "$msg")"
+    fi
+}
+
 # Send notification. The session label is the banner *title* — the one line
 # macOS always shows in full and never truncates — so a glance at a stack of
 # banners says which session each came from. What happened goes in the subtitle
@@ -307,7 +331,7 @@ send_notification() {
         if [[ "$should_send" == "true" ]]; then
             local full_msg="$slack_header"$'\n\n'"$slack_body"
             if ! is_duplicate_slack "$full_msg"; then
-                slack-noti "$full_msg"
+                slack_post "$full_msg"
             fi
         fi
     fi
