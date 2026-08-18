@@ -55,8 +55,19 @@ tmux select-pane -t "$target"
 # sent this is in a tmux over there. Same script, no app to raise on that end.
 # Backgrounded so a sleeping or unreachable box cannot stall the local focus.
 if [ -n "$remote" ]; then
-  ssh -o BatchMode=yes -o ConnectTimeout=4 "${remote%%:*}" \
-    "bin/tmux-focus ${remote#*:}" >/dev/null 2>&1 &
+  rhost=${remote%%:*}
+  rtarget=${remote#*:}
+  # Unlike every other argument, this one arrived over the network from the box
+  # being notified, and both halves end up on a command line: the host in ssh's
+  # own arguments, the target in a command the remote shell parses. So take only
+  # a plain hostname and a plain tmux target. A leading dash would otherwise
+  # smuggle `-oProxyCommand=...`, which runs here, on the Mac; a metacharacter in
+  # the target would run over there. Anything stranger just loses the second hop.
+  case $rhost in ''|-*|*[!A-Za-z0-9._-]*) rhost= ;; esac
+  case $rtarget in ''|*[!A-Za-z0-9._%:-]*) rtarget= ;; esac
+  [ -n "$rhost" ] && [ -n "$rtarget" ] &&
+    ssh -o BatchMode=yes -o ConnectTimeout=4 -- "$rhost" \
+      "bin/tmux-focus $rtarget" >/dev/null 2>&1 &
 fi
 
 # Everything below is macOS-only; on Linux the tmux focus above is the whole job.
