@@ -434,7 +434,21 @@ if echo "$json" | jq -e '.title and .message' >/dev/null 2>&1; then
     body=$(echo "$json" | jq -r '.message')
     send_notification "$title" "$body" "$header" "$body"
 else
-    # Stop hook payload
-    body="Ready for further instruction."
-    send_notification "Claude Code Stopped" "Ready for further instruction." "$header" "$body"
+    # Stop hook payload. On this Mac the Stop hook is claude-manager-hook.sh,
+    # which reads the transcript and hands the last thing Claude said down as a
+    # title+message pair, so this branch only ever ran as a fallback. A headless
+    # box has no manager and calls us directly, and "Ready for further
+    # instruction." on every banner says nothing about which agent wants what.
+    # So do the same lookup here: slurping needs whole lines, and the tail keeps
+    # a long session from being read end to end for its last few hundred.
+    body=""
+    transcript=$(echo "$json" | jq -r '.transcript_path // empty')
+    if [[ -n "$transcript" && -f "$transcript" ]]; then
+        body=$(tail -n 400 "$transcript" | jq -rs '
+            [.[] | select(.type == "assistant")
+                 | .message.content[]? | select(.type == "text") | .text]
+            | last // empty' 2>/dev/null)
+    fi
+    [[ -z "$body" ]] && body="Ready for further instruction."
+    send_notification "Claude Code Stopped" "$body" "$header" "$body"
 fi
