@@ -26,6 +26,14 @@ export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 #                                    this and nothing else.
 CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
 CLAUDE_NOTIFY_SLACK_SLEEP_ONLY="${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}"
+# CLAUDE_NOTIFY_PERMISSION=true - banner the Notification event too: a permission
+#                                 or approval prompt. Off by default. Running with
+#                                 auto-approval makes one rare, and the one that does
+#                                 fire is the generic "Claude needs your permission"
+#                                 that trails an AskUserQuestion - same group, so it
+#                                 replaces the banner naming the actual question with
+#                                 one saying less.
+CLAUDE_NOTIFY_PERMISSION="${CLAUDE_NOTIFY_PERMISSION:-false}"
 # Terminal app to raise when a desktop notification is clicked
 CLAUDE_NOTIFY_TERMINAL="${CLAUDE_NOTIFY_TERMINAL:-Ghostty}"
 # Thumbnail drawn on the right of the banner. The banner icon says which terminal
@@ -453,6 +461,7 @@ fi
 # but no .title — handle it before the title+message check so it doesn't fall
 # through to the generic Stop path.
 if [[ "$(echo "$json" | jq -r '.hook_event_name // empty')" == "Notification" ]]; then
+    [[ "$CLAUDE_NOTIFY_PERMISSION" == "true" ]] || exit 0
     body=$(echo "$json" | jq -r '.message // "Claude needs your attention."')
     # Skip the idle "waiting for your input" nudge: it fires ~60s after the agent
     # stops (already covered by the Stop hook) and is just noise. Only surface
