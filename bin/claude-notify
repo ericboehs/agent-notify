@@ -158,10 +158,13 @@ origin_pane() {
 # runs in (inherited by the hook) — not the active/focused pane. Without -t,
 # display-message reports whichever pane is focused, so a notification from an
 # unfocused pane would be mis-tagged (e.g. code:2.0 posted as code:1.0).
+tmux_pane_id=""
 if [[ -n "$TMUX_PANE" ]]; then
     tmux_info=$(tmux display-message -t "$TMUX_PANE" -p '#S:#{window_index}.#{pane_index}')
+    tmux_pane_id="$TMUX_PANE"
 elif [[ -n "$TMUX" ]]; then
     tmux_info=$(tmux display-message -p '#S:#{window_index}.#{pane_index}')
+    tmux_pane_id=$(tmux display-message -p '#{pane_id}')
 else
     tmux_info="Session"
 fi
@@ -169,8 +172,12 @@ fi
 # Keep the raw tmux target for the notification click action, separate from
 # whatever the banner ends up calling this pane. Empty means "not in tmux", so
 # there is nothing to click through to.
-tmux_target=""
-[[ "$tmux_info" != "Session" ]] && tmux_target="$tmux_info"
+#
+# The pane id, not the coordinates: with renumber-windows on, closing any window
+# shifts every index after it, so "code:6.0" baked in when the hook fired can
+# belong to a different window — or to nothing — by the time the banner is
+# clicked. A %id names the same pane for as long as it lives.
+tmux_target="$tmux_pane_id"
 
 # What the notification calls this session, best name first: the one you gave it
 # ("hd-recovery"), else the title Claude inferred, else the tmux coordinates —
