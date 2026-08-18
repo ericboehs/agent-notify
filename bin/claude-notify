@@ -118,6 +118,12 @@ claude_session_file() {
     done
 }
 
+# stat's spelling differs between the machines this runs on, and neither one's
+# flag is silently ignored by the other.
+file_size() {
+    stat -f %z "$1" 2>/dev/null || stat -c %s "$1" 2>/dev/null
+}
+
 # The AI-generated title Claude writes into the transcript ("Diagnose 16TB
 # Seagate drive failure") — what /list-agents shows for a session you never
 # named. Re-derived as the conversation moves on, so take the last one.
@@ -330,8 +336,6 @@ looking_at_target() {
 
     [[ "$CLAUDE_NOTIFY_WHEN_VISIBLE" == "true" ]] && return 1
     command -v osascript >/dev/null 2>&1 || return 1
-    # Frontmost says nothing about what anyone can see once the display is off.
-    is_display_asleep && return 1
 
     # Two hops, two questions. The far end answered its own before forwarding —
     # only it can see its tmux — so all that is left here is whether the ssh
@@ -345,6 +349,10 @@ looking_at_target() {
         *)     return 1 ;;
     esac
     [[ -n "$tag" ]] || return 1
+    # Cheap checks first: this one and the AppleScript below each cost more than
+    # everything above them put together, and most notifications are about a pane
+    # that is nowhere in sight. Frontmost says nothing once the display is off.
+    is_display_asleep && return 1
 
     # Empty unless the terminal is frontmost, in which case the title of the tab
     # it is showing. AppleScript compares text without regard to case, which is
@@ -590,7 +598,18 @@ else
         # ends a turn is always written after it. Two seconds of tenths, then give
         # up rather than hold the hook open for a turn that ended on a tool call
         # and has no closing text to wait for.
+        # Re-read only when the file has actually grown. Parsing 400 lines of a
+        # multi-megabyte transcript costs about as much as the tenth of a second
+        # between attempts, so a turn that ends on a tool call - nothing to wait
+        # for, every attempt made - used to spend seconds discovering that.
+        prev_size=""
         for _ in $(seq 20); do
+            size=$(file_size "$transcript")
+            if [[ "$size" == "$prev_size" ]]; then
+                sleep 0.1
+                continue
+            fi
+            prev_size="$size"
             body=$(tail -n 400 "$transcript" | jq -rs '
                 (([.[] | select(.type == "user") | .timestamp // empty] | last) // "") as $after
                 | [.[] | select(.type == "assistant")
