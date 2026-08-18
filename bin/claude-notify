@@ -226,6 +226,9 @@ remote_host=""
 # key on the sending machine's pane instead, since several of its sessions can
 # share one ssh — and so one local pane.
 notify_group=""
+# Whether the sending machine's pane was on top of its own tmux when it fired.
+# Only it could know; --recv fills this in from the payload.
+remote_visible=""
 
 # Forward mode: hand the whole notification to the machine the person is sitting
 # at. Everything the banner needs is settled here, on the machine that knows it;
@@ -241,11 +244,12 @@ forward_notification() {
         --arg origin "$(origin_pane)" \
         --arg host "${CLAUDE_NOTIFY_HOST:-$(hostname -s)}" \
         --arg target "$tmux_target" \
+        --arg visible "$(pane_visible_in_tmux && echo 1 || echo 0)" \
         --arg slack "$CLAUDE_NOTIFY_SLACK" \
         --arg slack_sleep_only "$CLAUDE_NOTIFY_SLACK_SLEEP_ONLY" \
         '{label: $label, subtitle: $subtitle, message: $message,
           slack_body: $slack_body, origin: $origin, host: $host, target: $target,
-          slack: $slack, slack_sleep_only: $slack_sleep_only}')
+          visible: $visible, slack: $slack, slack_sleep_only: $slack_sleep_only}')
 
     for host in ${CLAUDE_NOTIFY_FORWARD//,/ }; do
         # The requested command is what runs if the key is unrestricted; the
@@ -296,30 +300,50 @@ exit(0 if cg.CGDisplayIsAsleep(cg.CGMainDisplayID()) else 1)
 # has to agree, because guessing wrong here costs a notification you never see:
 # Accessibility can be denied, the pane can be on another machine, the screen can
 # be dark. "Cannot tell" has to mean notify.
-looking_at_target() {
-    local pane_active window_active attached fmt tag selected
+# As much of "is this pane on screen" as tmux alone can answer: the active pane,
+# of the active window, of a session someone is attached to. Anything less and it
+# is behind something. Whether that tmux is itself in front is a question for
+# whoever owns the display — here, or a machine away.
+pane_visible_in_tmux() {
+    local pane_active window_active attached
 
-    [[ "$CLAUDE_NOTIFY_WHEN_VISIBLE" == "true" ]] && return 1
-    [[ -n "$remote_focus" ]] && return 1      # the pane is on another machine
     [[ "$tmux_target" == %* ]] && command -v tmux >/dev/null 2>&1 || return 1
-    command -v osascript >/dev/null 2>&1 || return 1
-    # Frontmost says nothing about what anyone can see once the display is off.
-    is_display_asleep && return 1
-
-    # In tmux terms: the active pane, of the active window, of a session someone
-    # is attached to. Anything less and the pane is behind something.
     read -r pane_active window_active attached <<<"$(tmux display-message \
         -t "$tmux_target" -p '#{pane_active} #{window_active} #{session_attached}' 2>/dev/null)"
-    [[ "$pane_active" == 1 && "$window_active" == 1 && "${attached:-0}" -gt 0 ]] || return 1
+    [[ "$pane_active" == 1 && "$window_active" == 1 && "${attached:-0}" -gt 0 ]]
+}
 
-    # Which of the terminal's tabs that window is showing through. Same tag
-    # tmux-focus clicks on: set-titles-string expanded against this pane, minus
-    # the pane title, which Claude spins a glyph through several times a second.
+# The terminal tab a pane shows through. Same tag tmux-focus clicks on:
+# set-titles-string expanded against the pane, minus the pane title, which Claude
+# spins a glyph through several times a second.
+tab_tag() {
+    local fmt
     fmt=$(tmux show-options -gv set-titles-string 2>/dev/null)
     fmt=${fmt//\#T/}
     fmt=${fmt//\#\{pane_title\}/}
     [[ -n "$fmt" ]] || return 1
-    tag=$(tmux display-message -p -t "$tmux_target" "$fmt" 2>/dev/null)
+    tmux display-message -p -t "$tmux_target" "$fmt" 2>/dev/null
+}
+
+looking_at_target() {
+    local tag selected
+
+    [[ "$CLAUDE_NOTIFY_WHEN_VISIBLE" == "true" ]] && return 1
+    command -v osascript >/dev/null 2>&1 || return 1
+    # Frontmost says nothing about what anyone can see once the display is off.
+    is_display_asleep && return 1
+
+    # Two hops, two questions. The far end answered its own before forwarding —
+    # only it can see its tmux — so all that is left here is whether the ssh
+    # session showing it is the tab in front.
+    [[ -n "$remote_focus" && "$remote_visible" != "1" ]] && return 1
+
+    case "$tmux_target" in
+        # A plain ssh tab, addressed by the command Ghostty titles it with.
+        tab:*) tag=${tmux_target#tab:} ;;
+        %*)    pane_visible_in_tmux && tag=$(tab_tag) || return 1 ;;
+        *)     return 1 ;;
+    esac
     [[ -n "$tag" ]] || return 1
 
     # Empty unless the terminal is frontmost, in which case the title of the tab
@@ -478,6 +502,7 @@ if [[ -n "$recv" ]]; then
         remote_host=$(echo "$json" | jq -r '.host // empty')
         [[ -n "$remote_host" ]] && tmux_target="tab:ssh $remote_host"
     fi
+    remote_visible=$(echo "$json" | jq -r '.visible // ""')
     remote_focus=$(echo "$json" | jq -r 'if (.host // "") != "" and (.target // "") != ""
                                          then "\(.host):\(.target)" else "" end')
     # The sender's pane, not ours: it is what tells two Claudes on the same box
