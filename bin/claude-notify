@@ -8,6 +8,8 @@ export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 # Enable/disable Slack notifications (defaults to true)
 # CLAUDE_NOTIFY_SLACK=false        - never send Slack notifications
 # CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=true - only send when display is asleep (AFK)
+#                                    (both travel with a forwarded notification,
+#                                     so set them on the machine Claude runs on)
 # CLAUDE_NOTIFY_HOST=gfe            - prefix the session label (e.g. "gfe:hd-recovery")
 #                                    to distinguish this machine from others sharing the
 #                                    same #notifications channel. Unset = no prefix.
@@ -209,8 +211,11 @@ forward_notification() {
         --arg origin "$(origin_pane)" \
         --arg host "${CLAUDE_NOTIFY_HOST:-$(hostname -s)}" \
         --arg target "$tmux_target" \
+        --arg slack "$CLAUDE_NOTIFY_SLACK" \
+        --arg slack_sleep_only "$CLAUDE_NOTIFY_SLACK_SLEEP_ONLY" \
         '{label: $label, subtitle: $subtitle, message: $message,
-          slack_body: $slack_body, origin: $origin, host: $host, target: $target}')
+          slack_body: $slack_body, origin: $origin, host: $host, target: $target,
+          slack: $slack, slack_sleep_only: $slack_sleep_only}')
 
     for host in ${CLAUDE_NOTIFY_FORWARD//,/ }; do
         # The requested command is what runs if the key is unrestricted; the
@@ -286,8 +291,8 @@ send_notification() {
     local slack_header="${3:-$header}"
     local slack_body="${4:-$message}"
 
-    # Nothing local to draw on, and Slack is the far end's call too — it knows
-    # whether the display over there is asleep.
+    # Nothing local to draw on. Slack is posted by the far end (it holds the
+    # webhook), but under *our* policy, which rides along in the payload.
     if [[ -n "${CLAUDE_NOTIFY_FORWARD:-}" ]]; then
         forward_notification "$subtitle" "$message" "$slack_body"
         return
@@ -350,6 +355,10 @@ if [[ -n "$recv" ]]; then
     remote_focus=$(echo "$json" | jq -r 'if (.host // "") != "" and (.target // "") != ""
                                          then "\(.host):\(.target)" else "" end')
     notify_group="claude-$(echo "$json" | jq -r '(.host // "remote") + "-" + (.target // "")')"
+    # Whether to post to Slack at all is the sender's call; whether the display
+    # is asleep is still ours to measure, so only the policy travels.
+    CLAUDE_NOTIFY_SLACK=$(echo "$json" | jq -r '.slack // "true"')
+    CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=$(echo "$json" | jq -r '.slack_sleep_only // "false"')
     send_notification \
         "$(echo "$json" | jq -r '.subtitle // empty')" \
         "$(echo "$json" | jq -r '.message // empty')" \
