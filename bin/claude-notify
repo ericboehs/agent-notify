@@ -229,8 +229,8 @@ send_notification() {
 }
 
 # AskUserQuestion (PreToolUse hook): Claude is waiting on the user to choose.
-# Post the actual question(s) and numbered options so they can be seen while AFK
-# and answered in the pane's :claude: thread (watch-slack routes the reply back).
+# Post the actual question(s) and numbered options, so the Slack message says what
+# is being asked and can be answered from the Claude app without walking back.
 if [[ "$(echo "$json" | jq -r '.tool_name // empty')" == "AskUserQuestion" ]]; then
     body=$(echo "$json" | jq -r '
         .tool_input.questions[]? as $q
