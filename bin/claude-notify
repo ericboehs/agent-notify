@@ -622,12 +622,17 @@ else
         # newer than the last thing on the user side of the log — the real prompt,
         # or the tool result that ended the last round trip — since the reply that
         # ends a turn is always written after it. Two seconds of tenths, then give
-        # up rather than hold the hook open for a turn that ended on a tool call
-        # and has no closing text to wait for.
-        # Re-read only when the file has actually grown. Parsing 400 lines of a
-        # multi-megabyte transcript costs about as much as the tenth of a second
-        # between attempts, so a turn that ends on a tool call - nothing to wait
-        # for, every attempt made - used to spend seconds discovering that.
+        # up rather than wait on a turn with no closing text to come.
+        #
+        # Three answers, not two, because "no text yet" and "no text coming" want
+        # opposite things and look alike. Once a message newer than the user side
+        # has landed, that *is* the end of the turn: if it carries text we have the
+        # body, and if it carries only a tool call then nothing further is coming
+        # and every remaining attempt is two seconds spent confirming it. Only the
+        # third answer - nothing landed at all - is worth another tenth of a second.
+        #
+        # Re-read only when the file has actually grown, so the tenths that remain
+        # cost a stat rather than a parse of the last four hundred lines.
         prev_size=""
         for _ in $(seq 20); do
             size=$(file_size "$transcript")
@@ -636,16 +641,19 @@ else
                 continue
             fi
             prev_size="$size"
-            body=$(tail -n 400 "$transcript" | jq -rs '
+            reply=$(tail -n 400 "$transcript" | jq -rs '
                 (([.[] | select(.type == "user") | .timestamp // empty] | last) // "") as $after
                 | [.[] | select(.type == "assistant")
-                       | select((.timestamp // "") > $after)
-                       | select(.message.content[]?.type == "text")]
-                | last as $m
-                | if $m then [$m.message.content[] | select(.type == "text") | .text]
-                             | join("\n")
-                        else empty end' 2>/dev/null)
-            [[ -n "$body" ]] && break
+                       | select((.timestamp // "") > $after)] as $ended
+                | ($ended | map(select(.message.content[]?.type == "text")) | last) as $m
+                | if $m then "text\n" + ([$m.message.content[]
+                                           | select(.type == "text") | .text] | join("\n"))
+                  elif ($ended | length) > 0 then "silent"
+                  else empty end' 2>/dev/null)
+            case "$reply" in
+                silent) break ;;
+                text*)  body=${reply#text$'\n'}; break ;;
+            esac
             sleep 0.1
         done
     fi
