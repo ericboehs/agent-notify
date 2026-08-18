@@ -339,8 +339,9 @@ send_notification() {
     # notification from the same pane replace the previous one rather than
     # stacking up in Notification Center.
     local -a notifier_args=(-title "$label" -message "$(banner_text "$message")")
-    # claude-manager-hook.sh has no event name to give beyond a placeholder
-    # "Claude"; drop that rather than spend the subtitle line saying nothing.
+    # A subtitle is optional and mostly unwanted: claude-manager-hook.sh has no
+    # event name to give beyond a placeholder "Claude", and a plain stop passes
+    # none at all. Drop both rather than spend the line saying nothing.
     [[ -n "$subtitle" && "$subtitle" != "Claude" ]] && notifier_args+=(-subtitle "$subtitle")
     [[ -f "$CLAUDE_NOTIFY_IMAGE" ]] && notifier_args+=(-contentImage "$CLAUDE_NOTIFY_IMAGE")
     # A group is what makes a session's second banner replace its first instead
@@ -503,5 +504,9 @@ else
         done
     fi
     [[ -z "$body" ]] && body="Ready for further instruction."
-    send_notification "Claude Code Stopped" "$body" "$header" "$body"
+    # No subtitle: a stop is the ordinary case, and "Claude Code Stopped" over
+    # every banner is a line spent saying what the absence of a subtitle already
+    # says. The ones that do carry it are the exceptions worth noticing — a
+    # question waiting on an answer, a permission prompt.
+    send_notification "" "$body" "$header" "$body"
 fi
