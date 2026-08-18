@@ -4,11 +4,15 @@
 #
 # Usage: tmux-focus TARGET [APP] [REMOTE_HOST:REMOTE_TARGET]
 #
-#   TARGET  a %pane_id (preferred — survives renumbering) or SESSION:WINDOW.PANE
+#   TARGET  a %pane_id (preferred — survives renumbering), SESSION:WINDOW.PANE,
+#           or tab:TEXT to skip tmux entirely and just click the terminal tab
+#           whose title contains TEXT. An ssh started from a plain tab has no
+#           pane to select, and nesting a local tmux around it only to gain one
+#           is a worse trade than matching on the title.
 #   REMOTE  a machine reached through an ssh session running in TARGET, plus the
 #           pane to focus in *its* tmux. Claude on coop notifies through the Mac,
-#           so the click has two hops: the local pane holding the ssh, then the
-#           remote pane holding Claude.
+#           so the click has two hops: the local tab or pane holding the ssh,
+#           then the remote pane holding Claude.
 #
 # Used as terminal-notifier's -execute action so clicking a Claude Code
 # notification lands on the pane that sent it, instead of doing nothing.
@@ -23,33 +27,42 @@ remote=${3:-}
 # Notification Center spawns this with a bare PATH, so Homebrew is not on it.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-command -v tmux >/dev/null 2>&1 || exit 0
+# tab:TEXT addresses a terminal tab directly. There is no local pane to select,
+# so the tmux half is skipped and only the second hop and the tab click run.
+tab_match=""
+case "$target" in
+  tab:*) tab_match=${target#tab:}; target="" ;;
+esac
+
+[ -n "$target" ] && ! command -v tmux >/dev/null 2>&1 && exit 0
 
 # Notifications carry a %pane_id where they can, because a pane keeps it for life
 # while its session:window.pane shifts under renames and renumbering. Resolve it
 # to coordinates now, at click time, when it means something.
-case "$target" in
-  %*) target=$(tmux display-message -t "$target" -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) ;;
-esac
-[ -n "$target" ] || exit 0
+if [ -n "$target" ]; then
+  case "$target" in
+    %*) target=$(tmux display-message -t "$target" -p \
+          '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) ;;
+  esac
 
-session=${target%%:*}
-window=${target%.*}  # select-window rejects the .pane suffix
+  session=${target%%:*}
+  window=${target%.*}  # select-window rejects the .pane suffix
 
-tmux has-session -t "=$session" 2>/dev/null || exit 0
+  if [ -n "$target" ] && tmux has-session -t "=$session" 2>/dev/null; then
+    # Prefer a client already showing this session, so a click never yanks an
+    # unrelated window off whatever it was on; otherwise take the most recently
+    # active client. Delimit with | because session names may contain spaces.
+    client=$(tmux list-clients -F '#{client_activity}|#{client_session}|#{client_tty}' |
+      sort -rn | awk -F'|' -v s="$session" '$2 == s { print $3; exit }')
+    [ -n "$client" ] || client=$(tmux list-clients -F '#{client_activity}|#{client_tty}' |
+      sort -rn | awk -F'|' 'NR == 1 { print $2 }')
 
-# Prefer a client already showing this session, so a click never yanks an
-# unrelated window off whatever it was on; otherwise take the most recently
-# active client. Delimit with | because session names may contain spaces.
-client=$(tmux list-clients -F '#{client_activity}|#{client_session}|#{client_tty}' |
-  sort -rn | awk -F'|' -v s="$session" '$2 == s { print $3; exit }')
-[ -n "$client" ] || client=$(tmux list-clients -F '#{client_activity}|#{client_tty}' |
-  sort -rn | awk -F'|' 'NR == 1 { print $2 }')
-
-# Without -c there is no current client to infer, so it would pick arbitrarily.
-[ -n "$client" ] && tmux switch-client -c "$client" -t "=$session"
-tmux select-window -t "$window"
-tmux select-pane -t "$target"
+    # Without -c there is no current client to infer, so it would pick arbitrarily.
+    [ -n "$client" ] && tmux switch-client -c "$client" -t "=$session"
+    tmux select-window -t "$window"
+    tmux select-pane -t "$target"
+  fi
+fi
 
 # Second hop: the pane we just focused holds an ssh session, and the Claude that
 # sent this is in a tmux over there. Same script, no app to raise on that end.
@@ -89,7 +102,19 @@ open -a "$app"
 #     tab is running tmux.
 # Silent on failure by design: this is a nicety on top of a focus that already
 # happened, and it needs the calling app to hold Accessibility permission.
-osascript - "$app" "$session:" tmux >/dev/null 2>&1 <<'APPLESCRIPT' || true
+if [ -n "$tab_match" ]; then
+  # A bare ssh tab is titled by its command ("ssh coop"), so pass 1 matches that
+  # exactly and pass 2 settles for the bare hostname — enough to survive the tab
+  # being renamed by a remote tmux that sets titles.
+  pass1=$tab_match
+  pass2=${remote%%:*}
+  [ -n "$pass2" ] || pass2=$tab_match
+else
+  pass1="$session:"
+  pass2=tmux
+fi
+
+osascript - "$app" "$pass1" "$pass2" >/dev/null 2>&1 <<'APPLESCRIPT' || true
 on run argv
   set {appName, sessionTag, fallback} to argv
   tell application "System Events"

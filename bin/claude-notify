@@ -141,10 +141,17 @@ origin_pane() {
         tty=$(tmux list-clients -t "$session" -F '#{client_activity}|#{client_tty}' 2>/dev/null |
             sort -rn | head -1 | cut -d'|' -f2)
         [[ -n "$tty" ]] && origin=$(cat "$HOME/.claude/origin/${tty//\//-}" 2>/dev/null)
+
+        # Empty is the honest answer when this client never registered one. The
+        # inherited value would still be there to fall back on and would still
+        # name a live pane — just the wrong one, which is worse than none: the
+        # receiver can recover from silence, not from a confident wrong pane.
+        echo "$origin"
+        return
     fi
 
     # Straight into the ssh session with no tmux, and the environment is right.
-    echo "${origin:-${LC_CLAUDE_PANE:-}}"
+    echo "${LC_CLAUDE_PANE:-}"
 }
 
 # Get tmux info if available. Anchor to $TMUX_PANE — the pane THIS Claude process
@@ -192,6 +199,7 @@ header=":claude: $label"
 # Only --recv sets it: a forwarded notification's local target is the pane holding
 # the ssh, and this is the pane holding Claude on the far end of it.
 remote_focus=""
+remote_host=""
 # Repeat notifications replace rather than stack, keyed by pane. Forwarded ones
 # key on the sending machine's pane instead, since several of its sessions can
 # share one ssh — and so one local pane.
@@ -352,6 +360,15 @@ if [[ -n "$recv" ]]; then
     label=$(echo "$json" | jq -r '.label // "Remote"')
     header=":claude: $label"
     tmux_target=$(echo "$json" | jq -r '.origin // empty')
+    # No pane means the ssh was started from a plain terminal tab rather than
+    # from inside a tmux. Nothing to select, so address the tab by the title
+    # Ghostty gives it — its command line — and skip tmux on this end entirely.
+    # Wrapping that ssh in a local tmux purely to have a pane id would mean
+    # nesting a tmux inside a tmux, which is a worse trade than matching a title.
+    if [[ -z "$tmux_target" ]]; then
+        remote_host=$(echo "$json" | jq -r '.host // empty')
+        [[ -n "$remote_host" ]] && tmux_target="tab:ssh $remote_host"
+    fi
     remote_focus=$(echo "$json" | jq -r 'if (.host // "") != "" and (.target // "") != ""
                                          then "\(.host):\(.target)" else "" end')
     notify_group="claude-$(echo "$json" | jq -r '(.host // "remote") + "-" + (.target // "")')"
