@@ -293,6 +293,26 @@ slack_post() {
 # macOS always shows in full and never truncates — so a glance at a stack of
 # banners says which session each came from. What happened goes in the subtitle
 # ("Claude Code Stopped"), and the detail in the message.
+# Notification Center draws plain text, so every markdown marker in a message
+# survives as literal noise on the banner: asterisks around the words they were
+# meant to bold, backticks around a branch name, a whole URL after the link text
+# that already said where it goes. Strip the markers and keep the words. Slack
+# gets the message untouched, since there the markup is the point.
+#
+# Emphasis has to insist on a non-space after the marker, or a "* item" bullet
+# would pair up with the next one on the line and eat everything between them.
+banner_text() {
+    printf '%s' "$1" | perl -0pe '
+        s/```[a-zA-Z]*\n?//g;
+        s/\[([^\]\n]+)\]\([^)\n]+\)/$1/g;
+        s/<[^>|\n]+\|([^>\n]+)>/$1/g;
+        s/^\s{0,3}#{1,6}\s+//mg;
+        s/\*\*(\S(?:[^*]*\S)?)\*\*/$1/g;
+        s/(?<!\*)\*(\S(?:[^*\n]*\S)?)\*(?!\*)/$1/g;
+        s/`([^`\n]+)`/$1/g;
+    ' 2>/dev/null || printf '%s' "$1"
+}
+
 send_notification() {
     local subtitle="$1"
     local message="$2"
@@ -310,7 +330,7 @@ send_notification() {
     # click (the default is to do nothing at all), and -group makes a repeat
     # notification from the same pane replace the previous one rather than
     # stacking up in Notification Center.
-    local -a notifier_args=(-title "$label" -message "$message")
+    local -a notifier_args=(-title "$label" -message "$(banner_text "$message")")
     # claude-manager-hook.sh has no event name to give beyond a placeholder
     # "Claude"; drop that rather than spend the subtitle line saying nothing.
     [[ -n "$subtitle" && "$subtitle" != "Claude" ]] && notifier_args+=(-subtitle "$subtitle")
