@@ -2,7 +2,13 @@
 # Focus a tmux pane from outside tmux: point a client at it, then bring the
 # terminal app forward.
 #
-# Usage: tmux-focus SESSION:WINDOW.PANE [APP]
+# Usage: tmux-focus TARGET [APP] [REMOTE_HOST:REMOTE_TARGET]
+#
+#   TARGET  a %pane_id (preferred — survives renumbering) or SESSION:WINDOW.PANE
+#   REMOTE  a machine reached through an ssh session running in TARGET, plus the
+#           pane to focus in *its* tmux. Claude on coop notifies through the Mac,
+#           so the click has two hops: the local pane holding the ssh, then the
+#           remote pane holding Claude.
 #
 # Used as terminal-notifier's -execute action so clicking a Claude Code
 # notification lands on the pane that sent it, instead of doing nothing.
@@ -11,15 +17,25 @@ set -uo pipefail
 
 target=${1:-}
 app=${2:-Ghostty}
+remote=${3:-}
 [ -n "$target" ] || exit 0
-
-session=${target%%:*}
-window=${target%.*}  # select-window rejects the .pane suffix
 
 # Notification Center spawns this with a bare PATH, so Homebrew is not on it.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 command -v tmux >/dev/null 2>&1 || exit 0
+
+# Notifications carry a %pane_id where they can, because a pane keeps it for life
+# while its session:window.pane shifts under renames and renumbering. Resolve it
+# to coordinates now, at click time, when it means something.
+case "$target" in
+  %*) target=$(tmux display-message -t "$target" -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) ;;
+esac
+[ -n "$target" ] || exit 0
+
+session=${target%%:*}
+window=${target%.*}  # select-window rejects the .pane suffix
+
 tmux has-session -t "=$session" 2>/dev/null || exit 0
 
 # Prefer a client already showing this session, so a click never yanks an
@@ -34,6 +50,17 @@ client=$(tmux list-clients -F '#{client_activity}|#{client_session}|#{client_tty
 [ -n "$client" ] && tmux switch-client -c "$client" -t "=$session"
 tmux select-window -t "$window"
 tmux select-pane -t "$target"
+
+# Second hop: the pane we just focused holds an ssh session, and the Claude that
+# sent this is in a tmux over there. Same script, no app to raise on that end.
+# Backgrounded so a sleeping or unreachable box cannot stall the local focus.
+if [ -n "$remote" ]; then
+  ssh -o BatchMode=yes -o ConnectTimeout=4 "${remote%%:*}" \
+    "bin/tmux-focus ${remote#*:}" >/dev/null 2>&1 &
+fi
+
+# Everything below is macOS-only; on Linux the tmux focus above is the whole job.
+command -v osascript >/dev/null 2>&1 || exit 0
 
 open -a "$app"
 

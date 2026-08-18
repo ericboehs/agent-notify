@@ -7,6 +7,17 @@
 # CLAUDE_NOTIFY_HOST=gfe            - prefix the session label (e.g. "gfe:hd-recovery")
 #                                    to distinguish this machine from others sharing the
 #                                    same #notifications channel. Unset = no prefix.
+# CLAUDE_NOTIFY_FORWARD=e14,e14-wifi - this machine has no GUI worth notifying (a box you
+#                                    only ever ssh into), so hand the notification to the
+#                                    machine you are sitting at and let its claude-notify
+#                                    --recv draw it. Comma-separated addresses for the
+#                                    same host are tried in order, since DHCP decides
+#                                    which one answers today.
+#
+# --recv                            - read one of those forwarded payloads on stdin instead
+#                                    of a hook payload. Wired up as a forced command in
+#                                    ~/.ssh/authorized_keys so the sending box's key can do
+#                                    this and nothing else.
 CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
 CLAUDE_NOTIFY_SLACK_SLEEP_ONLY="${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}"
 # Terminal app to raise when a desktop notification is clicked
@@ -42,11 +53,16 @@ DEDUPE_FILE="$HOME/.claude/manager/notify-last"
 
 # Parse command line arguments
 sender=""
+recv=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --sender)
             sender="$2"
             shift 2
+            ;;
+        --recv)
+            recv=1
+            shift
             ;;
         *)
             echo "Unknown option: $1"
@@ -98,6 +114,30 @@ claude_ai_title() {
     done
 }
 
+# The pane on the *other* machine — the one running the ssh client this session
+# is reached through, and so the one a notification from here should focus. Empty
+# when nobody is connected, which just means the banner gets no click action.
+#
+# LC_CLAUDE_PANE arrives through ssh's default `SendEnv LANG LC_*` / sshd's
+# matching AcceptEnv, so no sshd configuration is involved. Claude has it in its
+# own environment when it runs in the ssh session directly; inside a tmux over
+# here it does not, because the tmux session outlives any one ssh connection —
+# hence the file the login shell drops per tty, read through whichever client is
+# attached right now.
+origin_pane() {
+    local session tty
+
+    [[ -n "${LC_CLAUDE_PANE:-}" ]] && { echo "$LC_CLAUDE_PANE"; return; }
+    [[ -n "${TMUX_PANE:-}" ]] || return
+
+    session=$(tmux display-message -t "$TMUX_PANE" -p '#{session_name}' 2>/dev/null) || return
+    tty=$(tmux list-clients -t "$session" -F '#{client_activity}|#{client_tty}' 2>/dev/null |
+        sort -rn | head -1 | cut -d'|' -f2)
+    [[ -n "$tty" ]] || return
+
+    cat "$HOME/.claude/origin/${tty//\//-}" 2>/dev/null
+}
+
 # Get tmux info if available. Anchor to $TMUX_PANE — the pane THIS Claude process
 # runs in (inherited by the hook) — not the active/focused pane. Without -t,
 # display-message reports whichever pane is focused, so a notification from an
@@ -120,7 +160,8 @@ tmux_target=""
 # ("hd-recovery"), else the title Claude inferred, else the tmux coordinates —
 # which only mean something once the layout is memorised. Clicking through lands
 # on the same pane whichever it is.
-session_file=$(claude_session_file "$(echo "$json" | jq -r '.session_id // empty')")
+session_file=""
+[[ -z "$recv" ]] && session_file=$(claude_session_file "$(echo "$json" | jq -r '.session_id // empty')")
 if [[ -n "$session_file" ]]; then
     label=$(jq -r '.name // empty' "$session_file" 2>/dev/null)
     [[ -z "$label" ]] && label=$(claude_ai_title "$(jq -r '.sessionId // empty' "$session_file" 2>/dev/null)")
@@ -137,6 +178,42 @@ fi
 # Every Slack post from this pane carries the same header, so its thread stays
 # the pane's thread even as the label follows a rename.
 header=":claude: $label"
+
+# Where a click goes after it has focused $tmux_target, as HOST:SESSION:WINDOW.PANE.
+# Only --recv sets it: a forwarded notification's local target is the pane holding
+# the ssh, and this is the pane holding Claude on the far end of it.
+remote_focus=""
+# Repeat notifications replace rather than stack, keyed by pane. Forwarded ones
+# key on the sending machine's pane instead, since several of its sessions can
+# share one ssh — and so one local pane.
+notify_group=""
+
+# Forward mode: hand the whole notification to the machine the person is sitting
+# at. Everything the banner needs is settled here, on the machine that knows it;
+# the far end only draws it and works out which of *its* panes to focus.
+forward_notification() {
+    local payload host
+
+    payload=$(jq -n \
+        --arg label "$label" \
+        --arg subtitle "$1" \
+        --arg message "$2" \
+        --arg slack_body "$3" \
+        --arg origin "$(origin_pane)" \
+        --arg host "${CLAUDE_NOTIFY_HOST:-$(hostname -s)}" \
+        --arg target "$tmux_target" \
+        '{label: $label, subtitle: $subtitle, message: $message,
+          slack_body: $slack_body, origin: $origin, host: $host, target: $target}')
+
+    for host in ${CLAUDE_NOTIFY_FORWARD//,/ }; do
+        # The requested command is what runs if the key is unrestricted; the
+        # authorized_keys forced command overrides it with the same thing.
+        printf '%s' "$payload" |
+            ssh -o BatchMode=yes -o ConnectTimeout=4 "$host" 'bin/claude-notify --recv' \
+                >/dev/null 2>&1 && return 0
+    done
+    return 1
+}
 
 # Check for duplicate Slack messages
 is_duplicate_slack() {
@@ -183,6 +260,13 @@ send_notification() {
     local slack_header="${3:-$header}"
     local slack_body="${4:-$message}"
 
+    # Nothing local to draw on, and Slack is the far end's call too — it knows
+    # whether the display over there is asleep.
+    if [[ -n "${CLAUDE_NOTIFY_FORWARD:-}" ]]; then
+        forward_notification "$subtitle" "$message" "$slack_body"
+        return
+    fi
+
     # Clicking a banner should land on the pane that sent it. -execute runs on
     # click (the default is to do nothing at all), and -group makes a repeat
     # notification from the same pane replace the previous one rather than
@@ -194,8 +278,9 @@ send_notification() {
     [[ -f "$CLAUDE_NOTIFY_IMAGE" ]] && notifier_args+=(-contentImage "$CLAUDE_NOTIFY_IMAGE")
     if [[ -n "$tmux_target" ]]; then
         notifier_args+=(
-            -execute "$(printf '%q %q %q' "$TMUX_FOCUS" "$tmux_target" "$CLAUDE_NOTIFY_TERMINAL")"
-            -group "claude-$tmux_target"
+            -execute "$(printf '%q %q %q %q' "$TMUX_FOCUS" "$tmux_target" \
+                "$CLAUDE_NOTIFY_TERMINAL" "$remote_focus")"
+            -group "${notify_group:-claude-$tmux_target}"
         )
     fi
 
@@ -227,6 +312,25 @@ send_notification() {
         fi
     fi
 }
+
+# --recv: a notification forwarded from another machine's claude-notify. Its
+# label, event and body are settled; what is left is the click target, and that
+# is two panes deep — the local one holding the ssh session, then the pane on the
+# far side running Claude.
+if [[ -n "$recv" ]]; then
+    label=$(echo "$json" | jq -r '.label // "Remote"')
+    header=":claude: $label"
+    tmux_target=$(echo "$json" | jq -r '.origin // empty')
+    remote_focus=$(echo "$json" | jq -r 'if (.host // "") != "" and (.target // "") != ""
+                                         then "\(.host):\(.target)" else "" end')
+    notify_group="claude-$(echo "$json" | jq -r '(.host // "remote") + "-" + (.target // "")')"
+    send_notification \
+        "$(echo "$json" | jq -r '.subtitle // empty')" \
+        "$(echo "$json" | jq -r '.message // empty')" \
+        "$header" \
+        "$(echo "$json" | jq -r '.slack_body // .message // empty')"
+    exit 0
+fi
 
 # AskUserQuestion (PreToolUse hook): Claude is waiting on the user to choose.
 # Post the actual question(s) and numbered options, so the Slack message says what
