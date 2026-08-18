@@ -95,6 +95,18 @@ done
 # Read JSON from stdin
 json=$(cat)
 
+# One pass for every field that decides where this payload goes. Each was its own
+# jq, and on a managed laptop with security software inspecting each new process a
+# spawn costs 14ms against coop's 4 - enough of the banner's latency to be worth
+# one awkward line. Unit separator rather than a tab, because IFS folds a run of
+# whitespace into a single delimiter: a payload with no tool_name would hand every
+# later field the value of the one before it. These five are identifiers and
+# paths; the free text stays in its own calls below.
+IFS=$'\037' read -r hook_session_id hook_tool hook_event hook_transcript hook_titled <<<"$(
+    echo "$json" | jq -r '[.session_id // "", .tool_name // "", .hook_event_name // "",
+                           .transcript_path // "",
+                           (if .title and .message then "1" else "" end)] | join("\u001f")' 2>/dev/null)"
+
 # Locate this hook's entry in ~/.claude/sessions/, where Claude keeps one file
 # per live session holding its name, sessionId and pid. Empty if not found.
 claude_session_file() {
@@ -205,7 +217,7 @@ tmux_target="$tmux_pane_id"
 # which only mean something once the layout is memorised. Clicking through lands
 # on the same pane whichever it is.
 session_file=""
-[[ -z "$recv" ]] && session_file=$(claude_session_file "$(echo "$json" | jq -r '.session_id // empty')")
+[[ -z "$recv" ]] && session_file=$(claude_session_file "$hook_session_id")
 if [[ -n "$session_file" ]]; then
     label=$(jq -r '.name // empty' "$session_file" 2>/dev/null)
     [[ -z "$label" ]] && label=$(claude_ai_title "$(jq -r '.sessionId // empty' "$session_file" 2>/dev/null)")
@@ -533,7 +545,7 @@ fi
 # AskUserQuestion (PreToolUse hook): Claude is waiting on the user to choose.
 # Post the actual question(s) and numbered options, so the Slack message says what
 # is being asked and can be answered from the Claude app without walking back.
-if [[ "$(echo "$json" | jq -r '.tool_name // empty')" == "AskUserQuestion" ]]; then
+if [[ "$hook_tool" == "AskUserQuestion" ]]; then
     body=$(echo "$json" | jq -r '
         .tool_input.questions[]? as $q
         | "*\($q.header // "Question")*\(if $q.multiSelect then " (choose any)" else "" end): \($q.question)"
@@ -560,7 +572,7 @@ fi
 # input" nudge). Claude Code fires this with a ready-made human-readable .message
 # but no .title — handle it before the title+message check so it doesn't fall
 # through to the generic Stop path.
-if [[ "$(echo "$json" | jq -r '.hook_event_name // empty')" == "Notification" ]]; then
+if [[ "$hook_event" == "Notification" ]]; then
     [[ "$CLAUDE_NOTIFY_PERMISSION" == "true" ]] || exit 0
     body=$(echo "$json" | jq -r '.message // "Claude needs your attention."')
     # Skip the idle "waiting for your input" nudge: it fires ~60s after the agent
@@ -575,7 +587,7 @@ if [[ "$(echo "$json" | jq -r '.hook_event_name // empty')" == "Notification" ]]
 fi
 
 # Check if this is a notification with title/message or a stop hook
-if echo "$json" | jq -e '.title and .message' >/dev/null 2>&1; then
+if [[ -n "$hook_titled" ]]; then
     # Notification payload
     title=$(echo "$json" | jq -r '.title')
     body=$(echo "$json" | jq -r '.message')
@@ -589,7 +601,7 @@ else
     # So do the same lookup here: slurping needs whole lines, and the tail keeps
     # a long session from being read end to end for its last few hundred.
     body=""
-    transcript=$(echo "$json" | jq -r '.transcript_path // empty')
+    transcript="$hook_transcript"
     if [[ -n "$transcript" && -f "$transcript" ]]; then
         # Claude appends the message it just finished *after* firing this hook, so
         # reading immediately hands back the turn before last. Wait for a message
