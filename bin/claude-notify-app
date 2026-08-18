@@ -79,6 +79,20 @@ fi
 codesign --force --sign - "$DEST" >/dev/null 2>&1
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST"
 
+# Clicking a banner ends in an AppleScript that clicks the terminal's tab, which
+# needs Accessibility. macOS ties that grant to the signature, and an ad-hoc
+# signature changes with every build, so a rebuilt app inherits a grant it can no
+# longer satisfy - and TCC answers "no" without ever asking again, leaving clicks
+# that focus the pane but not the tab. Dropping the stale grant here means the
+# next click asks for permission instead of quietly half-working.
+tccutil reset Accessibility "$BUNDLE_ID" >/dev/null 2>&1
+tccutil reset AppleEvents "$BUNDLE_ID" >/dev/null 2>&1
+
 echo "Built $DEST"
 echo "  icon:      $ICNS"
 echo "  bundle id: $BUNDLE_ID"
+echo
+echo "Accessibility and Apple Events grants were reset. The next banner you"
+echo "click will ask to control your computer - allow it in System Settings >"
+echo "Privacy & Security > Accessibility, or clicks will focus the pane but not"
+echo "the tab it lives in."
