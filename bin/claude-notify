@@ -34,6 +34,12 @@ CLAUDE_NOTIFY_SLACK_SLEEP_ONLY="${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}"
 #                                 replaces the banner naming the actual question with
 #                                 one saying less.
 CLAUDE_NOTIFY_PERMISSION="${CLAUDE_NOTIFY_PERMISSION:-false}"
+# CLAUDE_NOTIFY_WHEN_VISIBLE=true - banner a pane you are already watching. Off by
+#                                 default: if the terminal is frontmost, showing the
+#                                 tab this pane's tmux window lives in, and the pane
+#                                 is the active one there, the notification is telling
+#                                 you what is already on your screen.
+CLAUDE_NOTIFY_WHEN_VISIBLE="${CLAUDE_NOTIFY_WHEN_VISIBLE:-false}"
 # Terminal app to raise when a desktop notification is clicked
 CLAUDE_NOTIFY_TERMINAL="${CLAUDE_NOTIFY_TERMINAL:-Ghostty}"
 # Thumbnail drawn on the right of the banner. The banner icon says which terminal
@@ -286,6 +292,64 @@ exit(0 if cg.CGDisplayIsAsleep(cg.CGMainDisplayID()) else 1)
 " 2>/dev/null
 }
 
+# True when the pane this notification is about is already on screen. Every step
+# has to agree, because guessing wrong here costs a notification you never see:
+# Accessibility can be denied, the pane can be on another machine, the screen can
+# be dark. "Cannot tell" has to mean notify.
+looking_at_target() {
+    local pane_active window_active attached fmt tag selected
+
+    [[ "$CLAUDE_NOTIFY_WHEN_VISIBLE" == "true" ]] && return 1
+    [[ -n "$remote_focus" ]] && return 1      # the pane is on another machine
+    [[ "$tmux_target" == %* ]] && command -v tmux >/dev/null 2>&1 || return 1
+    command -v osascript >/dev/null 2>&1 || return 1
+    # Frontmost says nothing about what anyone can see once the display is off.
+    is_display_asleep && return 1
+
+    # In tmux terms: the active pane, of the active window, of a session someone
+    # is attached to. Anything less and the pane is behind something.
+    read -r pane_active window_active attached <<<"$(tmux display-message \
+        -t "$tmux_target" -p '#{pane_active} #{window_active} #{session_attached}' 2>/dev/null)"
+    [[ "$pane_active" == 1 && "$window_active" == 1 && "${attached:-0}" -gt 0 ]] || return 1
+
+    # Which of the terminal's tabs that window is showing through. Same tag
+    # tmux-focus clicks on: set-titles-string expanded against this pane, minus
+    # the pane title, which Claude spins a glyph through several times a second.
+    fmt=$(tmux show-options -gv set-titles-string 2>/dev/null)
+    fmt=${fmt//\#T/}
+    fmt=${fmt//\#\{pane_title\}/}
+    [[ -n "$fmt" ]] || return 1
+    tag=$(tmux display-message -p -t "$tmux_target" "$fmt" 2>/dev/null)
+    [[ -n "$tag" ]] || return 1
+
+    # Empty unless the terminal is frontmost, in which case the title of the tab
+    # it is showing. AppleScript compares text without regard to case, which is
+    # what we want: the process answers to "ghostty", the setting says "Ghostty".
+    selected=$(osascript - "$CLAUDE_NOTIFY_TERMINAL" 2>/dev/null <<'APPLESCRIPT'
+on run argv
+  set appName to item 1 of argv
+  tell application "System Events"
+    set p to first process whose frontmost is true
+    if name of p is not appName then return ""
+    tell p
+      if (count of windows) is 0 then return ""
+      if exists tab group 1 of window 1 then
+        repeat with t from 1 to (count of radio buttons of tab group 1 of window 1)
+          if value of radio button t of tab group 1 of window 1 is true then
+            return title of radio button t of tab group 1 of window 1
+          end if
+        end repeat
+        return ""
+      end if
+      return title of window 1
+    end tell
+  end tell
+end run
+APPLESCRIPT
+    )
+    [[ -n "$selected" && "$selected" == *"$tag"* ]]
+}
+
 # slack-noti wants the webhook in its environment, and --recv has no environment
 # to speak of: an ssh forced command reaches neither the GUI session's launchd
 # variables nor the login keychain fnox keeps them in. Copying the secret to disk
@@ -365,8 +429,11 @@ send_notification() {
         )
     fi
 
+    # Nothing to announce about a pane you are already watching.
+    if looking_at_target; then
+        :
     # Only check if iTerm2 is frontmost when --sender com.googlecode.iterm2 is passed
-    if [[ "$sender" == "com.googlecode.iterm2" ]]; then
+    elif [[ "$sender" == "com.googlecode.iterm2" ]]; then
         local frontmost_app=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')
         if [[ "$frontmost_app" != "iTerm2" ]]; then
             "$NOTIFIER" "${notifier_args[@]}"
