@@ -335,11 +335,16 @@ send_notification() {
     # "Claude"; drop that rather than spend the subtitle line saying nothing.
     [[ -n "$subtitle" && "$subtitle" != "Claude" ]] && notifier_args+=(-subtitle "$subtitle")
     [[ -f "$CLAUDE_NOTIFY_IMAGE" ]] && notifier_args+=(-contentImage "$CLAUDE_NOTIFY_IMAGE")
+    # A group is what makes a session's second banner replace its first instead
+    # of stacking, so every notification wants one, click target or not. The pane
+    # is the natural identity when there is one; without it fall back to the
+    # label, which names the session. Two sessions outside tmux on the same box
+    # used to land on the same empty-pane group and quietly overwrite each other.
+    notifier_args+=(-group "${notify_group:-claude-${tmux_target:-$label}}")
     if [[ -n "$tmux_target" ]]; then
         notifier_args+=(
             -execute "$(printf '%q %q %q %q' "$TMUX_FOCUS" "$tmux_target" \
                 "$CLAUDE_NOTIFY_TERMINAL" "$remote_focus")"
-            -group "${notify_group:-claude-$tmux_target}"
         )
     fi
 
@@ -391,7 +396,11 @@ if [[ -n "$recv" ]]; then
     fi
     remote_focus=$(echo "$json" | jq -r 'if (.host // "") != "" and (.target // "") != ""
                                          then "\(.host):\(.target)" else "" end')
-    notify_group="claude-$(echo "$json" | jq -r '(.host // "remote") + "-" + (.target // "")')"
+    # The sender's pane, not ours: it is what tells two Claudes on the same box
+    # apart. Headless there is no pane, so its label stands in.
+    notify_group="claude-$(echo "$json" | jq -r '
+        (.host // "remote") + "-" +
+        (if (.target // "") != "" then .target else (.label // "") end)')"
     # Whether to post to Slack at all is the sender's call; whether the display
     # is asleep is still ours to measure, so only the policy travels.
     CLAUDE_NOTIFY_SLACK=$(echo "$json" | jq -r '.slack // "true"')
