@@ -1,16 +1,16 @@
 #!/bin/bash
 # claude-notify-app - (re)build the branded notifier app bundle used by claude-notify
 #
-# macOS takes a notification's icon and name from the bundle that posted it, and
-# ignores terminal-notifier's -appIcon. terminal-notifier's own -sender flag can
-# borrow another app's identity, but it keeps the process alive waiting for a
-# click, which would hang a hook. So instead we keep a private copy of
-# terminal-notifier.app carrying the terminal's icon and its own bundle id.
+# macOS takes a notification's icon and name from the bundle that posted it, so
+# the banners come from our own tiny app carrying the terminal's icon and its
+# own bundle id, rather than from a shared CLI. The app is lib/claude-notifier.swift,
+# compiled here; it also handles the click, which is why the bundle has to be a
+# real app in ~/Applications rather than a bare binary.
 #
-# Re-run this after `brew upgrade terminal-notifier` or to switch terminals:
+# Re-run this after editing the source or to switch terminals:
 #   CLAUDE_NOTIFY_TERMINAL=iTerm claude-notify-app
 #
-# The first notification from the rebuilt bundle triggers a macOS authorization
+# The first notification from a rebuilt bundle can trigger a macOS authorization
 # prompt ("Claude Code" Notifications) - allow it, or the banners stay silent.
 
 set -e
@@ -20,16 +20,10 @@ APP_NAME="${CLAUDE_NOTIFY_APP_NAME:-Claude Code}"
 BUNDLE_ID="${CLAUDE_NOTIFY_BUNDLE_ID:-com.ericboehs.claude-notify}"
 DEST="$HOME/Applications/$APP_NAME Notify.app"
 
-# Locate the Homebrew terminal-notifier bundle via its CLI symlink:
-# <prefix>/bin/terminal-notifier -> <cellar>/bin/terminal-notifier, and the app
-# sits one level above that bin directory.
-notifier_bin=$(command -v terminal-notifier) || {
-    echo "terminal-notifier not found - brew install terminal-notifier" >&2
-    exit 1
-}
-notifier_bin=$(readlink -f "$notifier_bin" 2>/dev/null || echo "$notifier_bin")
-SRC="$(dirname "$(dirname "$notifier_bin")")/terminal-notifier.app"
-[[ -d "$SRC" ]] || { echo "terminal-notifier.app not found at $SRC" >&2; exit 1; }
+REPO="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
+SRC="$REPO/lib/claude-notifier.swift"
+[[ -f "$SRC" ]] || { echo "notifier source not found at $SRC" >&2; exit 1; }
+command -v xcrun >/dev/null || { echo "xcrun not found - install the Xcode command line tools" >&2; exit 1; }
 
 # Pull the icon out of the terminal we want the notifications to look like.
 TERM_APP="/Applications/$CLAUDE_NOTIFY_TERMINAL.app"
@@ -42,31 +36,47 @@ ICNS="$TERM_APP/Contents/Resources/$icon.icns"
 
 mkdir -p "$HOME/Applications"
 rm -rf "$DEST"
-cp -R "$SRC" "$DEST"
-
-# Swap in the terminal's icon and claim a distinct identity, so this shows up as
-# its own entry in System Settings > Notifications rather than as
-# "terminal-notifier".
-rm -f "$DEST/Contents/Resources/"*.icns
+mkdir -p "$DEST/Contents/MacOS" "$DEST/Contents/Resources"
 cp "$ICNS" "$DEST/Contents/Resources/$icon.icns"
-plist="$DEST/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile $icon" "$plist"
+
+# LSUIElement keeps the app out of the Dock and the app switcher: it exists only
+# to post a banner and to be relaunched when one is clicked.
+cat > "$DEST/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key><string>claude-notifier</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+  <key>CFBundleName</key><string>$APP_NAME</string>
+  <key>CFBundleIconFile</key><string>$icon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+</dict>
+</plist>
+PLIST
+
+xcrun --sdk macosx swiftc -swift-version 5 -O \
+    -o "$DEST/Contents/MacOS/claude-notifier" "$SRC" \
+    -framework AppKit -framework UserNotifications
 
 # Thumbnail for the AskUserQuestion path, so a banner that needs an *answer*
 # reads differently from one that is merely done. Rendered into the bundle (and
-# so before the re-sign below) to keep it alongside the icon it ships with.
-RENDER="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/render-symbol.js"
+# so before the signing below) to keep it alongside the icon it ships with.
+RENDER="$REPO/lib/render-symbol.js"
 if [[ -f "$RENDER" ]]; then
     osascript -l JavaScript "$RENDER" \
         questionmark.circle.fill "$DEST/Contents/Resources/question.png" D97757 >/dev/null 2>&1 ||
         echo "  note: question thumbnail failed to render; those banners keep the default one"
 fi
 
-# Editing the bundle invalidates Homebrew's signature; an ad-hoc re-sign is
-# enough for LaunchServices to accept it.
-codesign --force --deep --sign - "$DEST" >/dev/null 2>&1
+# An ad-hoc signature is enough for LaunchServices, and for the notification
+# system to tie a delivered banner back to this bundle when it is clicked.
+codesign --force --sign - "$DEST" >/dev/null 2>&1
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST"
 
 echo "Built $DEST"

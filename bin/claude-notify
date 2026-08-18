@@ -46,11 +46,12 @@ CLAUDE_NOTIFY_IMAGE="${CLAUDE_NOTIFY_IMAGE-/Applications/Claude.app/Contents/Res
 TMUX_FOCUS=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/tmux-focus
 
 # macOS draws the banner's icon and name from the bundle that posted it, so
-# posting through our own copy of terminal-notifier.app (built by
-# claude-notify-app, carrying the terminal's icon) is what turns the generic
-# Terminal icon into Ghostty's. Fall back to the plain CLI if it isn't built.
+# posting through our own app (built by claude-notify-app, carrying the
+# terminal's icon) is what turns the generic Terminal icon into Ghostty's. It is
+# also what receives the click, so the fallback below only ever gets a banner on
+# screen - clicking it does nothing until the app is built.
 NOTIFIER_APP="$HOME/Applications/${CLAUDE_NOTIFY_APP_NAME:-Claude Code} Notify.app"
-NOTIFIER="$NOTIFIER_APP/Contents/MacOS/terminal-notifier"
+NOTIFIER="$NOTIFIER_APP/Contents/MacOS/claude-notifier"
 [[ -x "$NOTIFIER" ]] || NOTIFIER="terminal-notifier"
 
 # Deduplication: skip if same message sent within this many seconds
