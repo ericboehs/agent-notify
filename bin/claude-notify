@@ -444,10 +444,26 @@ else
     body=""
     transcript=$(echo "$json" | jq -r '.transcript_path // empty')
     if [[ -n "$transcript" && -f "$transcript" ]]; then
-        body=$(tail -n 400 "$transcript" | jq -rs '
-            [.[] | select(.type == "assistant")
-                 | .message.content[]? | select(.type == "text") | .text]
-            | last // empty' 2>/dev/null)
+        # Claude appends the message it just finished *after* firing this hook, so
+        # reading immediately hands back the turn before last. Wait for a message
+        # newer than the last thing on the user side of the log — the real prompt,
+        # or the tool result that ended the last round trip — since the reply that
+        # ends a turn is always written after it. Two seconds of tenths, then give
+        # up rather than hold the hook open for a turn that ended on a tool call
+        # and has no closing text to wait for.
+        for _ in $(seq 20); do
+            body=$(tail -n 400 "$transcript" | jq -rs '
+                (([.[] | select(.type == "user") | .timestamp // empty] | last) // "") as $after
+                | [.[] | select(.type == "assistant")
+                       | select((.timestamp // "") > $after)
+                       | select(.message.content[]?.type == "text")]
+                | last as $m
+                | if $m then [$m.message.content[] | select(.type == "text") | .text]
+                             | join("\n")
+                        else empty end' 2>/dev/null)
+            [[ -n "$body" ]] && break
+            sleep 0.1
+        done
     fi
     [[ -z "$body" ]] && body="Ready for further instruction."
     send_notification "Claude Code Stopped" "$body" "$header" "$body"
