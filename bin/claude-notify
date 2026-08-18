@@ -269,8 +269,10 @@ slack_post() {
     if [[ -n "${BOEHS_SLACK_NOTI_HOOK:-}" ]]; then
         slack-noti "$msg"
     elif command -v tmux >/dev/null 2>&1 && tmux has-session 2>/dev/null; then
-        # -b so a slow webhook never holds up the hook that is waiting on us.
-        tmux run-shell -b "$(printf '%q %q' "$HOME/bin/slack-noti" "$msg")"
+        # -b so a slow webhook never holds up the hook that is waiting on us,
+        # and silenced because tmux surfaces a run-shell's output in the client:
+        # curl's "ok" would otherwise land in whatever pane you were looking at.
+        tmux run-shell -b "$(printf '%q %q' "$HOME/bin/slack-noti" "$msg") >/dev/null 2>&1"
     fi
 }
 
