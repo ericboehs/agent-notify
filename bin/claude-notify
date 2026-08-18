@@ -4,7 +4,7 @@
 # Enable/disable Slack notifications (defaults to true)
 # CLAUDE_NOTIFY_SLACK=false        - never send Slack notifications
 # CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=true - only send when display is asleep (AFK)
-# CLAUDE_NOTIFY_HOST=gfe            - prefix the pane label (e.g. ":claude: gfe:code:1.0")
+# CLAUDE_NOTIFY_HOST=gfe            - prefix the session label (e.g. "gfe:hd-recovery")
 #                                    to distinguish this machine from others sharing the
 #                                    same #notifications channel. Unset = no prefix.
 CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
@@ -58,6 +58,46 @@ done
 # Read JSON from stdin
 json=$(cat)
 
+# Locate this hook's entry in ~/.claude/sessions/, where Claude keeps one file
+# per live session holding its name, sessionId and pid. Empty if not found.
+claude_session_file() {
+    local sid="$1" dir="$HOME/.claude/sessions" file pid
+
+    # Hooks Claude invokes directly get .session_id on stdin.
+    if [[ -n "$sid" ]]; then
+        file=$(jq -r --arg sid "$sid" 'select(.sessionId == $sid) | input_filename' \
+            "$dir"/*.json 2>/dev/null | head -1)
+        [[ -n "$file" ]] && { echo "$file"; return; }
+    fi
+
+    # Wrappers (claude-manager-hook.sh, claude-1p-notify) synthesise their own
+    # {title,message} payload and drop session_id, so walk up the process tree
+    # instead: the hook is always a descendant of the claude process the file is
+    # named for.
+    pid=$$
+    while [[ -n "$pid" && "$pid" -gt 1 ]]; do
+        [[ -f "$dir/$pid.json" ]] && { echo "$dir/$pid.json"; return; }
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d "[:space:]")
+    done
+}
+
+# The AI-generated title Claude writes into the transcript ("Diagnose 16TB
+# Seagate drive failure") — what /list-agents shows for a session you never
+# named. Re-derived as the conversation moves on, so take the last one.
+claude_ai_title() {
+    local sid="$1" transcript titles
+
+    for transcript in "$HOME/.claude/projects"/*/"$sid.jsonl"; do
+        [[ -f "$transcript" ]] || continue
+        # These land every few turns, so the tail almost always has one; only
+        # walk a multi-megabyte transcript end to end when it doesn't.
+        titles=$(tail -c 262144 "$transcript" | grep -a '"type":"ai-title"')
+        [[ -z "$titles" ]] && titles=$(grep -a '"type":"ai-title"' "$transcript")
+        printf '%s\n' "$titles" | tail -1 | jq -r '.aiTitle // empty' 2>/dev/null
+        return
+    done
+}
+
 # Get tmux info if available. Anchor to $TMUX_PANE — the pane THIS Claude process
 # runs in (inherited by the hook) — not the active/focused pane. Without -t,
 # display-message reports whichever pane is focused, so a notification from an
@@ -70,23 +110,38 @@ else
     tmux_info="Session"
 fi
 
-# Keep a copy of the raw target for the notification click action, before any
-# cosmetic labelling is applied to tmux_info. Empty means "not in tmux", so
+# Keep the raw tmux target for the notification click action, separate from
+# whatever the banner ends up calling this pane. Empty means "not in tmux", so
 # there is nothing to click through to.
 tmux_target=""
 [[ "$tmux_info" != "Session" ]] && tmux_target="$tmux_info"
 
-# Optional per-machine label so notifications from different hosts are
-# distinguishable in a shared #notifications channel (e.g. "gfe:code:1.0").
-# Baked into tmux_info so the header, desktop message, and dedup hash all agree.
-if [[ -n "$CLAUDE_NOTIFY_HOST" ]]; then
-    tmux_info="${CLAUDE_NOTIFY_HOST}:${tmux_info}"
+# What the notification calls this session, best name first: the one you gave it
+# ("hd-recovery"), else the title Claude inferred, else the tmux coordinates —
+# which only mean something once the layout is memorised. Clicking through lands
+# on the same pane whichever it is.
+session_file=$(claude_session_file "$(echo "$json" | jq -r '.session_id // empty')")
+if [[ -n "$session_file" ]]; then
+    label=$(jq -r '.name // empty' "$session_file" 2>/dev/null)
+    [[ -z "$label" ]] && label=$(claude_ai_title "$(jq -r '.sessionId // empty' "$session_file" 2>/dev/null)")
 fi
+label="${label:-$tmux_info}"
+
+# Optional per-machine prefix so notifications from different hosts are
+# distinguishable in a shared #notifications channel (e.g. "gfe:hd-recovery").
+# Baked into the label so the desktop message and dedup hash agree with it.
+if [[ -n "$CLAUDE_NOTIFY_HOST" ]]; then
+    label="${CLAUDE_NOTIFY_HOST}:${label}"
+fi
+
+# Every Slack post from this pane carries the same header, so its thread stays
+# the pane's thread even as the label follows a rename.
+header=":claude: $label"
 
 # Check for duplicate Slack messages
 is_duplicate_slack() {
     local msg="$1"
-    local msg_hash=$(echo -n "$tmux_info:$msg" | md5 -q)
+    local msg_hash=$(echo -n "$label:$msg" | md5 -q)
     local now=$(date +%s)
 
     mkdir -p "$(dirname "$DEDUPE_FILE")"
@@ -118,18 +173,24 @@ exit(0 if cg.CGDisplayIsAsleep(cg.CGMainDisplayID()) else 1)
 " 2>/dev/null
 }
 
-# Send notification
+# Send notification. The session label is the banner *title* — the one line
+# macOS always shows in full and never truncates — so a glance at a stack of
+# banners says which session each came from. What happened goes in the subtitle
+# ("Claude Code Stopped"), and the detail in the message.
 send_notification() {
-    local title="$1"
+    local subtitle="$1"
     local message="$2"
-    local slack_header="${3:-$title}"
+    local slack_header="${3:-$header}"
     local slack_body="${4:-$message}"
 
     # Clicking a banner should land on the pane that sent it. -execute runs on
     # click (the default is to do nothing at all), and -group makes a repeat
     # notification from the same pane replace the previous one rather than
     # stacking up in Notification Center.
-    local -a notifier_args=(-title "$title" -message "$message")
+    local -a notifier_args=(-title "$label" -message "$message")
+    # claude-manager-hook.sh has no event name to give beyond a placeholder
+    # "Claude"; drop that rather than spend the subtitle line saying nothing.
+    [[ -n "$subtitle" && "$subtitle" != "Claude" ]] && notifier_args+=(-subtitle "$subtitle")
     [[ -f "$CLAUDE_NOTIFY_IMAGE" ]] && notifier_args+=(-contentImage "$CLAUDE_NOTIFY_IMAGE")
     if [[ -n "$tmux_target" ]]; then
         notifier_args+=(
@@ -180,13 +241,16 @@ if [[ "$(echo "$json" | jq -r '.tool_name // empty')" == "AskUserQuestion" ]]; t
               ] | join("") )
     ' 2>/dev/null)
     [[ -z "$body" ]] && body="Claude is asking for your input."
+    # Slack gets every question and option; the banner gets the first question,
+    # stripped of the *bold* markers Slack wants.
+    desktop_body=$(printf '%s\n' "$body" | head -1 | tr -d '*')
+    [[ -z "$desktop_body" ]] && desktop_body="Claude is asking for your input."
     # This one is blocked on an answer, not just finished — a question mark
     # separates it from a Stop banner without having to read the text. Only
     # overrides the default, so an explicit CLAUDE_NOTIFY_IMAGE still wins.
     question_icon="$NOTIFIER_APP/Contents/Resources/question.png"
     [[ -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" && -f "$question_icon" ]] && CLAUDE_NOTIFY_IMAGE="$question_icon"
-    header=":claude: $tmux_info"
-    send_notification "Claude needs your input" "$tmux_info needs your input" "$header" "$body"
+    send_notification "Waiting on your answer" "$desktop_body" "$header" "$body"
     exit 0
 fi
 
@@ -203,8 +267,7 @@ if [[ "$(echo "$json" | jq -r '.hook_event_name // empty')" == "Notification" ]]
     case "$lc" in
         *"waiting for your input"*) exit 0 ;;
     esac
-    header=":claude: $tmux_info"
-    send_notification "Claude needs your attention" "$tmux_info: $body" "$header" "$body"
+    send_notification "Claude needs your attention" "$body" "$header" "$body"
     exit 0
 fi
 
@@ -213,11 +276,9 @@ if echo "$json" | jq -e '.title and .message' >/dev/null 2>&1; then
     # Notification payload
     title=$(echo "$json" | jq -r '.title')
     body=$(echo "$json" | jq -r '.message')
-    header=":claude: $tmux_info"
-    send_notification "$title" "$tmux_info: $body" "$header" "$body"
+    send_notification "$title" "$body" "$header" "$body"
 else
     # Stop hook payload
-    header=":claude: $tmux_info"
     body="Ready for further instruction."
-    send_notification "Claude Code Stopped" "$tmux_info is ready for further instruction." "$header" "$body"
+    send_notification "Claude Code Stopped" "Ready for further instruction." "$header" "$body"
 fi
