@@ -88,35 +88,53 @@ command -v osascript >/dev/null 2>&1 || exit 0
 
 open -a "$app"
 
+
 # Raising the app lands on whatever tab it was last showing, which need not be
 # the one running tmux. Nothing in Ghostty's CLI can focus an existing surface
 # (+new-window is the only IPC it has), so drive the tab bar through the
 # accessibility API instead: macOS tabs are radio buttons in the window's tab
 # group, and clicking one selects it.
 #
-# Two ways to recognise the tab, best first:
-#   - with tmux `set-titles on`, the terminal title is #S:#I:#W, so the tab
-#     titled "code:..." is the one whose client we just moved;
-#   - without it tmux sets no title at all and Ghostty falls back to the command
-#     ("tmux -u attach"), which still singles the tab out as long as only one
-#     tab is running tmux.
+# Ways to recognise the tab, tried best first:
+#   - with tmux `set-titles on`, expand set-titles-string against the pane we
+#     just focused: that is character for character the title tmux hands the
+#     terminal, so it picks out one tab even when an ssh tab next to it shows a
+#     remote tmux whose session is also called "code";
+#   - failing that, any tab bearing the session name, which is wrong only when a
+#     remote session shares it;
+#   - failing that, tmux sets no title at all and Ghostty falls back to the
+#     command ("tmux -u attach"), which singles the tab out as long as only one
+#     tab runs tmux.
 # Silent on failure by design: this is a nicety on top of a focus that already
 # happened, and it needs the calling app to hold Accessibility permission.
 if [ -n "$tab_match" ]; then
   # A bare ssh tab is titled by its command ("ssh coop"), so pass 1 matches that
   # exactly and pass 2 settles for the bare hostname — enough to survive the tab
   # being renamed by a remote tmux that sets titles.
-  pass1=$tab_match
-  pass2=${remote%%:*}
-  [ -n "$pass2" ] || pass2=$tab_match
+  tags=("$tab_match")
+  [ -n "${remote%%:*}" ] && tags+=("${remote%%:*}")
 else
-  pass1="$session:"
-  pass2=tmux
+  tags=()
+  if [ -n "$target" ]; then
+    # Expand set-titles-string against the pane, minus the pane title: Claude
+    # spins a glyph through it several times a second, so a title captured here
+    # need not be the one Ghostty is showing a moment later. What is left is
+    # "code:4 " — enough to tell the local session apart from an ssh tab whose
+    # remote tmux is also called "code", and it holds still.
+    title_fmt=$(tmux show-options -gv set-titles-string 2>/dev/null)
+    title_fmt=${title_fmt//\#T/}
+    title_fmt=${title_fmt//\#\{pane_title\}/}
+    [ -n "$title_fmt" ] &&
+      prefix=$(tmux display-message -p -t "$target" "$title_fmt" 2>/dev/null)
+    [ -n "${prefix:-}" ] && tags+=("$prefix")
+  fi
+  tags+=("$session:" tmux)
 fi
 
-osascript - "$app" "$pass1" "$pass2" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+osascript - "$app" "${tags[@]}" >/dev/null 2>&1 <<'APPLESCRIPT' || true
 on run argv
-  set {appName, sessionTag, fallback} to argv
+  set appName to item 1 of argv
+  set tags to rest of argv
   tell application "System Events"
     if not (exists process appName) then return
     tell process appName
@@ -124,13 +142,11 @@ on run argv
       -- references keyed by *name*, and selecting a tab renames the window it
       -- lives in, so anything captured up front goes stale mid-loop.
       set winCount to count of windows
-      -- Pass 1 looks for the session tag, pass 2 settles for the command name.
-      repeat with pass from 1 to 2
+      repeat with tag in tags
         repeat with w from 1 to winCount
           if exists tab group 1 of window w then
             repeat with t from 1 to (count of radio buttons of tab group 1 of window w)
-              if my matches(title of radio button t of tab group 1 of window w, ¬
-                  sessionTag, fallback, pass) then
+              if my matches(title of radio button t of tab group 1 of window w, tag) then
                 if value of radio button t of tab group 1 of window w is false then
                   click radio button t of tab group 1 of window w
                 end if
@@ -138,7 +154,7 @@ on run argv
                 return
               end if
             end repeat
-          else if my matches(title of window w, sessionTag, fallback, pass) then
+          else if my matches(title of window w, tag) then
             perform action "AXRaise" of window w
             return
           end if
@@ -150,9 +166,8 @@ end run
 
 -- `contains`, not `starts with`: Ghostty prefixes a tab that rang the bell with
 -- a 🔔, and tmux's set-titles-string can lead with alert markers of its own.
-on matches(t, sessionTag, fallback, pass)
+on matches(t, tag)
   if t is missing value then return false
-  if pass is 1 then return t contains sessionTag
-  return t contains fallback
+  return t contains tag
 end matches
 APPLESCRIPT
