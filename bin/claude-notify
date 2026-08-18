@@ -73,6 +73,7 @@ DEDUPE_WINDOW=30
 DEDUPE_FILE="$HOME/.claude/manager/notify-last"
 
 # Parse command line arguments
+argv=("$@")
 sender=""
 recv=""
 while [[ $# -gt 0 ]]; do
@@ -94,6 +95,19 @@ done
 
 # Read JSON from stdin
 json=$(cat)
+
+# Hand the rest to a detached copy and let the turn end. Everything below costs
+# real time - up to two seconds waiting for the reply text to reach the transcript,
+# another second of ssh out to the machine that has a screen - and Claude holds the
+# turn open until its hook exits, so the session was paying for the banner's
+# latency. It is a banner; it can arrive on its own. --recv is already running as
+# somebody else's background work, and the ssh that invoked it wants its exit
+# status, so that path stays in the foreground.
+if [[ -z "$recv" && -z "$CLAUDE_NOTIFY_FOREGROUND" ]]; then
+    printf '%s' "$json" |
+        CLAUDE_NOTIFY_FOREGROUND=1 nohup "$0" ${argv[@]+"${argv[@]}"} >/dev/null 2>&1 &
+    exit 0
+fi
 
 # One pass for every field that decides where this payload goes. Each was its own
 # jq, and on a managed laptop with security software inspecting each new process a
