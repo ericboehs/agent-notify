@@ -1,0 +1,302 @@
+# claude-notify
+
+Desktop notifications for [Claude Code](https://claude.com/claude-code) that know
+which pane they came from — so clicking a banner lands you on the tmux pane that
+sent it, even when that pane is on another machine.
+
+Claude Code fires hooks at the moments worth knowing about: a turn ending, a
+question blocking, a permission prompt. `claude-notify` turns those payloads into
+macOS banners tagged with the tmux target of the sending pane. A machine with no
+GUI ships its banners over ssh to one that has — no daemon, no open port, no sshd
+configuration on either end.
+
+```
+┌─────────────────────┐        ┌──────────────────────────┐
+│ headless box        │  ssh   │ the Mac you sit at       │
+│ Stop hook           │ ─────► │ claude-notify --recv     │
+│ claude-notify       │        │ → banner → click         │
+└─────────────────────┘        │ → tmux-focus (local tab) │
+           ▲                   └──────────┬───────────────┘
+           └──────────── ssh ─────────────┘
+             tmux-focus, on its own tmux
+```
+
+## Install
+
+```bash
+git clone https://github.com/ericboehs/claude-notify ~/Code/claude-notify
+cd ~/Code/claude-notify && ./install.sh
+```
+
+That symlinks the three scripts into `~/bin`, builds the notifier app bundle, and
+prints the hook configuration to add to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop":         [{ "hooks": [{ "type": "command", "command": "$HOME/bin/claude-notify" }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "$HOME/bin/claude-notify" }] }],
+    "PreToolUse":   [{ "matcher": "AskUserQuestion",
+                       "hooks": [{ "type": "command", "command": "$HOME/bin/claude-notify" }] }]
+  }
+}
+```
+
+To click a banner through to its pane, `.zshrc` has to tell the far end which pane
+an ssh session came from. See [Clicking through, two hops](#clicking-through-two-hops).
+
+## The three pieces
+
+| | |
+|---|---|
+| `bin/claude-notify` | Reads the hook payload, decides whether to post, routes it locally or over ssh |
+| `bin/tmux-focus` | Spends the address a banner carries: selects the pane, its window, its tab |
+| `bin/claude-notify-app` | Builds `~/Applications/Claude Code Notify.app`, the bundle that can receive a click |
+
+## What stays quiet
+
+Three things post nothing at all.
+
+**A pane you are already watching.** If the terminal is frontmost, showing the tab
+that pane's tmux window lives in, and the pane is the active one there, a banner
+would be describing the screen you are looking at. Every check has to agree before
+it stays quiet — a denied Accessibility grant, a sleeping display, or a pane on
+another machine all mean "cannot tell", which posts. `CLAUDE_NOTIFY_WHEN_VISIBLE=true`
+turns the suppression off.
+
+A forwarded notification splits the question in two, because neither machine can
+answer both halves. The sending box says whether the pane was on top of its own
+tmux and puts that in the payload; the Mac says whether the tab holding that ssh
+session is the one in front. Only if both agree does the banner stay unsent.
+
+**Permission prompts.** Claude Code fires its `Notification` event for approvals,
+but the payload names no tool — just "Claude needs your permission" — and it lands
+moments after the `AskUserQuestion` banner that *does* say what is being asked.
+They share a group, so the vague one replaced the useful one. Off by default;
+`CLAUDE_NOTIFY_PERMISSION=true` brings it back.
+
+**A session still waiting on its own agents.** A turn that ends while background
+agents are still running is the session waiting, not finishing — and each of those
+agents wakes it again on its way out, so one `/pr-review-toolkit:review-pr`
+fanning out to six reviewers drew six banners, none of which was the review.
+Claude wakes a session by queueing a `<task-notification>` carrying the tool_use
+id of the call that started the task, so the ids launched since the last thing you
+typed, minus the ids already reported back, is what is still out there. Zero of
+them means the work is genuinely over, and that turn gets the banner.
+
+Any other announcer that fires on `Stop` wants the same count, so it is available
+on its own:
+
+```bash
+claude-notify --pending-tasks ~/.claude/projects/<project>/<session>.jsonl
+```
+
+## Forwarding from a headless machine
+
+A box with no GUI has nowhere to draw a banner. Set `CLAUDE_NOTIFY_FORWARD` on it
+and `claude-notify` ships the notification to a machine that does, over ssh:
+
+```bash
+CLAUDE_NOTIFY_HOST=coop CLAUDE_NOTIFY_SLACK=false \
+  CLAUDE_NOTIFY_FORWARD=e14,e14-wifi $HOME/bin/claude-notify
+```
+
+`CLAUDE_NOTIFY_HOST` prefixes the label, so banners read `coop:code:1.0`. The
+forward list is tried in order until one connection succeeds — a wired address
+and a wireless one for the same laptop is the useful pairing.
+
+On the receiving Mac, restrict the key to exactly the one thing it may do:
+
+```
+restrict,command="/Users/you/bin/claude-notify --recv" ssh-ed25519 AAAA… notify@coop
+```
+
+A forced command inherits no environment, which is why `--recv` re-exports a PATH
+and why both Slack knobs travel *in the payload*: set `CLAUDE_NOTIFY_SLACK` and
+`CLAUDE_NOTIFY_SLACK_SLEEP_ONLY` on the machine Claude runs on, not on the Mac.
+Whether the display is asleep stays the receiver's question, since it is the only
+one that can measure it.
+
+`restrict` is carrying weight here, not decoration: it refuses a pty, port
+forwarding, agent forwarding and the rest, and `command=` replaces whatever the
+client asked to run — so a machine holding only this key cannot get a shell on the
+Mac, which is what makes it safe to point at a box running work you do not trust.
+What such a box can still do is hand arbitrary JSON to that one command, so
+nothing on the path from payload to click is assembled by string interpolation:
+the click action is quoted field by field with `printf %q`, `tmux-focus`
+allowlists the host and target of the second hop before either reaches a command
+line, and both AppleScript blocks take their input through `on run argv`.
+
+### Clicking through, two hops
+
+A forwarded banner has to walk further than a local one: first to whatever holds
+the ssh session on the Mac, then to the pane running Claude on the far side.
+`tmux-focus` takes both, and the local half comes in one of two shapes.
+
+**The ssh runs inside a tmux pane.** `.zshrc` exports `LC_CLAUDE_PANE=$TMUX_PANE`,
+which rides along on ssh's stock `SendEnv LANG LC_*` and is accepted by sshd's
+stock `AcceptEnv LANG LC_*` — nothing to configure. On arrival `.zshrc` records it
+per-tty, because the value a tmux *server* inherited names whichever pane started
+it, possibly days ago:
+
+```bash
+if [[ -n $SSH_TTY ]]; then
+  mkdir -p ~/.claude/origin
+  if [[ -n $LC_CLAUDE_PANE ]]; then
+    print -r -- $LC_CLAUDE_PANE > ~/.claude/origin/${SSH_TTY//\//-}
+  else
+    rm -f ~/.claude/origin/${SSH_TTY//\//-}   # ttys are reused
+  fi
+elif [[ -n $TMUX_PANE ]]; then
+  export LC_CLAUDE_PANE=$TMUX_PANE
+fi
+```
+
+That `else` branch matters: a login with no pane to declare has to *erase* the
+last one's answer, not merely decline to write. Ttys get reused, so `/dev/pts/0`
+keeps whatever an earlier connection left there, and a stale id is live and wrong.
+When the attached client never registered one, `claude-notify` reports no pane at
+all rather than that stale id — a click that lands confidently on an unrelated
+pane is worse than one that falls through to the tab match below.
+
+**The ssh runs in a plain terminal tab.** There is no pane to select, and wrapping
+it in a local tmux purely to invent one would nest a tmux inside a tmux. Instead
+the click addresses the tab by title — Ghostty titles a bare tab with its command
+line, so `tab:ssh coop` finds it, and `tmux-focus` skips its tmux half entirely:
+
+```bash
+tmux-focus 'tab:ssh coop' Ghostty coop:code:1.0
+```
+
+Either way the second hop is the same: ssh back to the far machine and run
+`tmux-focus` there against its own tmux, so the right window is already selected
+by the time the tab comes forward. It is backgrounded, so a sleeping box delays
+nothing locally.
+
+## Banner icon
+
+macOS reads a notification's icon and name off the bundle that posted it and
+ignores `terminal-notifier -appIcon`, so out of the box every banner wears the
+generic Terminal icon. `claude-notify-app` (run by `install.sh`) builds a small
+app at `~/Applications/Claude Code Notify.app` from `lib/claude-notifier.swift`,
+carrying your terminal's icon and its own bundle id — banners then show the ghost,
+and the app gets its own row in System Settings › Notifications instead of hiding
+under "terminal-notifier".
+
+Building one rather than dressing up `terminal-notifier` is what makes a click
+work at all. `terminal-notifier` posts through `NSUserNotification`, deprecated
+long ago and finally inert on macOS 26: the banner still appears, but the click
+never comes back, so `-execute` runs nothing and there is no way to reach the
+pane. `claude-notifier` posts through `UserNotifications` instead and answers
+`didReceive` by running the command. The `terminal-notifier` CLI stays as a
+fallback, but all it can do is put a banner on screen.
+
+The first banner triggers a one-time macOS authorization prompt; allow it. Re-run
+`claude-notify-app` to point at a different terminal:
+
+```bash
+CLAUDE_NOTIFY_TERMINAL=iTerm claude-notify-app
+```
+
+### Letting a click reach the tab
+
+Selecting the tmux pane needs no permission. Clicking the terminal *tab* it lives
+in does, because that goes through the accessibility API — so the first click asks
+to control your computer, and until you allow **Claude Code** under System Settings
+› Privacy & Security › Accessibility, clicks land on the right pane inside the
+wrong tab.
+
+Worth knowing when that starts happening again for no apparent reason: the app is
+ad-hoc signed, macOS ties the grant to the signature, and every rebuild produces a
+new one. The stale grant is then unsatisfiable, and TCC answers no *without* asking
+again. So `claude-notify-app` ends by dropping both grants —
+
+```bash
+tccutil reset Accessibility com.ericboehs.claude-notify
+tccutil reset AppleEvents   com.ericboehs.claude-notify
+```
+
+— trading one fresh prompt for a permission that silently no longer works.
+
+Banners also carry a thumbnail on the right, which splits the two questions: the
+left icon says *which terminal*, the thumbnail says *what it wants*:
+
+| Thumbnail | Event |
+|-----------|-------|
+| Claude glyph | `Stop` — done, nothing owed |
+| Question mark | `AskUserQuestion` — blocked until you pick an option |
+| 1Password key | an unlock prompt that names neither pane nor item |
+
+So a banner that needs an *answer* is distinguishable from one that is merely
+finished without reading the text. Override per-call with
+`CLAUDE_NOTIFY_IMAGE=/path/to/icon` (`.icns` works as-is, and an explicit value
+beats the per-event defaults), or set it empty to drop the thumbnail.
+
+The question mark is rendered from the `questionmark.circle.fill` SF Symbol into
+the app bundle by `claude-notify-app`, via `lib/render-symbol.js` — JXA rather
+than something needing installation, since the ObjC bridge ships on every Mac and
+PyObjC does not. Retint or restyle it there:
+
+```bash
+osascript -l JavaScript lib/render-symbol.js exclamationmark.triangle.fill out.png D97757
+```
+
+## Costing the turn nothing
+
+Claude holds a turn open until its hook exits, so every second the banner spends
+being drawn is a second the session still looks busy. A stop forwarded from a
+headless box was spending six of them.
+
+Most of that was waiting for text. A banner wants the last thing Claude said, and
+that used to mean tailing the transcript until the message landed — Claude appends
+it *after* firing the hook, so reading immediately hands back the turn before last.
+The `Stop` payload carries `last_assistant_message`, which is the same answer for
+nothing. The transcript wait survives as a fallback for payloads without the field,
+and now ends as soon as the turn's last message has landed: once anything newer
+than the user side is there, a message with no text means none is coming, and the
+remaining tenths were being spent confirming it.
+
+What is left is the ssh out to a machine with a screen, which nothing makes
+instant. So the hook hands the payload to a detached copy of itself and exits —
+the turn ends, and the banner arrives a moment later on its own. Only `--recv`
+stays in the foreground, since the ssh that invoked it wants its exit status.
+
+## When a banner is late
+
+A banner crosses two machines before anyone sees it, so "it showed up late" has
+several possible authors: the hook firing late, the wait for the reply text, the
+ssh, or macOS sitting on a notification it was handed promptly. Timestamping the
+stages settles which, and costs nothing when nobody is asking:
+
+```bash
+touch ~/.claude-notify-debug     # on either machine, or both
+tail -f ~/.claude-notify-debug   # hook entry, forward, draw, suppression
+rm ~/.claude-notify-debug        # stop
+```
+
+## Environment
+
+| Variable | Effect |
+|---|---|
+| `CLAUDE_NOTIFY_FORWARD` | Comma-separated hosts to ship banners to; tried in order until one connects |
+| `CLAUDE_NOTIFY_HOST` | Prefix the session label, so banners read `coop:code:1.0` |
+| `CLAUDE_NOTIFY_TERMINAL` | Which terminal a click should raise (default `Ghostty`) |
+| `CLAUDE_NOTIFY_WHEN_VISIBLE` | Post even for a pane you are already looking at |
+| `CLAUDE_NOTIFY_PERMISSION` | Bring the vague permission notifications back |
+| `CLAUDE_NOTIFY_IMAGE` | Override the banner thumbnail; empty drops it |
+| `CLAUDE_NOTIFY_SLACK` | Post to Slack as well as the desktop; travels in the forwarded payload |
+| `CLAUDE_NOTIFY_SLACK_SLEEP_ONLY` | Slack only when the display is asleep, measured by the receiver |
+
+## Requirements
+
+- macOS on the machine that draws banners (the sending box can be anything with bash)
+- Claude Code
+- tmux, for click-through to a pane
+- `jq`
+- Xcode command line tools (`xcrun swiftc`), to build the notifier app
+- `terminal-notifier`, as a fallback when the app bundle is missing
+- `slack-noti` (optional), only for the Slack path
+
+## License
+
+MIT
