@@ -72,6 +72,34 @@ NOTIFIER="$NOTIFIER_APP/Contents/MacOS/claude-notifier"
 DEDUPE_WINDOW=30
 DEDUPE_FILE="$HOME/.claude/manager/notify-last"
 
+# How many of this session's background agents have not reported back yet, for
+# the Stop guard below and for claude-manager-hook.sh, which announces this Mac's
+# own sessions and has the same reason to stay quiet. Claude wakes a session
+# whose task finished by queueing a <task-notification> carrying the tool_use id
+# of the call that started it, so the ids launched since the last thing the user
+# actually typed, minus the ids already reported back, is what is still out there.
+pending_tasks() {
+    local transcript="$1"
+    [[ -f "$transcript" ]] || { echo 0; return; }
+    tail -n 400 "$transcript" | jq -rs '
+        ([ range(0; length) as $i
+           | select(.[$i] | .type == "user"
+                    and ((.message.content | type) == "string"
+                         or (.message.content[0]?.type == "text")))
+           | $i ] | last // -1) as $start
+        | .[$start + 1:] as $turn
+        | ([ $turn[] | select(.type == "assistant") | .message.content[]?
+             | select(.type == "tool_use")
+             | select(.name == "Agent" or .name == "Workflow"
+                      or (.name == "Bash" and .input.run_in_background == true))
+             | .id ] | unique) as $launched
+        | ([ $turn[] | select(.type == "attachment") | .attachment
+             | select(.type == "queued_command") | .prompt // ""
+             | select(startswith("<task-notification>"))
+             | capture("<tool-use-id>(?<id>[^<]*)</tool-use-id>").id ] | unique) as $done
+        | ($launched - $done) | length' 2>/dev/null || echo 0
+}
+
 # Parse command line arguments
 argv=("$@")
 sender=""
@@ -85,6 +113,10 @@ while [[ $# -gt 0 ]]; do
         --recv)
             recv=1
             shift
+            ;;
+        --pending-tasks)
+            pending_tasks "$2"
+            exit 0
             ;;
         *)
             echo "Unknown option: $1"
@@ -621,6 +653,16 @@ if [[ -n "$hook_titled" ]]; then
     body=$(echo "$json" | jq -r '.message')
     send_notification "$title" "$body" "$header" "$body"
 else
+    # A turn that ends while its own background agents are still running is not
+    # the session finishing, it is the session waiting - and each of those agents
+    # wakes it again on its way out, so a /pr-review-toolkit:review-pr fanning
+    # out to six reviewers announced itself six times. Wait for the last one and
+    # draw a single banner, for the turn that has the whole review in it.
+    if [[ "$hook_event" == "Stop" ]] && [[ "$(pending_tasks "$hook_transcript")" -gt 0 ]]; then
+        nlog "suppressed, background tasks still running"
+        exit 0
+    fi
+
     # Stop hook payload. On this Mac the Stop hook is claude-manager-hook.sh,
     # which reads the transcript and hands the last thing Claude said down as a
     # title+message pair, so this branch only ever ran as a fallback. A headless
