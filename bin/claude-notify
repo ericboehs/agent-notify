@@ -96,6 +96,15 @@ done
 # Read JSON from stdin
 json=$(cat)
 
+# A banner crosses two machines before anyone sees it, so "it showed up late" has
+# several possible authors: the hook firing late, the wait for the reply text, the
+# ssh, or macOS sitting on a notification it was handed promptly. Timestamping the
+# stages settles which, and costs nothing when nobody is asking - create
+# ~/.claude-notify-debug on both machines to start, delete it to stop.
+NOTIFY_DEBUG="$HOME/.claude-notify-debug"
+nlog() { [[ -e "$NOTIFY_DEBUG" ]] && echo "$(date '+%H:%M:%S') $$ $*" >> "$NOTIFY_DEBUG"; return 0; }
+nlog "enter recv=${recv:-0} detached=${CLAUDE_NOTIFY_FOREGROUND:-0} event=$(echo "$json" | jq -r '.hook_event_name // "-"' 2>/dev/null)"
+
 # Hand the rest to a detached copy and let the turn end. Everything below costs
 # real time - up to two seconds waiting for the reply text to reach the transcript,
 # another second of ssh out to the machine that has a screen - and Claude holds the
@@ -283,6 +292,7 @@ forward_notification() {
           slack_body: $slack_body, origin: $origin, host: $host, target: $target,
           visible: $visible, slack: $slack, slack_sleep_only: $slack_sleep_only}')
 
+    nlog "forwarding to $CLAUDE_NOTIFY_FORWARD"
     for host in ${CLAUDE_NOTIFY_FORWARD//,/ }; do
         # The requested command is what runs if the key is unrestricted; the
         # authorized_keys forced command overrides it with the same thing.
@@ -456,6 +466,7 @@ send_notification() {
     local message="$2"
     local slack_header="${3:-$header}"
     local slack_body="${4:-$message}"
+    nlog "send_notification entered"
 
     # Nothing local to draw on. Slack is posted by the far end (it holds the
     # webhook), but under *our* policy, which rides along in the payload.
@@ -489,6 +500,7 @@ send_notification() {
 
     # Nothing to announce about a pane you are already watching.
     if looking_at_target; then
+        nlog "suppressed, pane is on screen"
         :
     # Only check if iTerm2 is frontmost when --sender com.googlecode.iterm2 is passed
     elif [[ "$sender" == "com.googlecode.iterm2" ]]; then
@@ -497,7 +509,9 @@ send_notification() {
             "$NOTIFIER" "${notifier_args[@]}"
         fi
     else
+        nlog "drawing [$label] ${message:0:60}"
         "$NOTIFIER" "${notifier_args[@]}"
+        nlog "drawn rc=$?"
     fi
 
     # Send Slack notification if enabled (with deduplication)
@@ -614,9 +628,14 @@ else
     # instruction." on every banner says nothing about which agent wants what.
     # So do the same lookup here: slurping needs whole lines, and the tail keeps
     # a long session from being read end to end for its last few hundred.
-    body=""
+    # Claude hands the finished reply to the hook that announces it, which is the
+    # whole question this branch used to answer the hard way - tailing the
+    # transcript and waiting for the message to land in it. Keep the old path for
+    # payloads without the field: claude-manager-hook.sh synthesises its own, and
+    # an older Claude on another machine may not send one.
+    body=$(echo "$json" | jq -r '.last_assistant_message // empty' 2>/dev/null)
     transcript="$hook_transcript"
-    if [[ -n "$transcript" && -f "$transcript" ]]; then
+    if [[ -z "$body" && -n "$transcript" && -f "$transcript" ]]; then
         # Claude appends the message it just finished *after* firing this hook, so
         # reading immediately hands back the turn before last. Wait for a message
         # newer than the last thing on the user side of the log — the real prompt,
