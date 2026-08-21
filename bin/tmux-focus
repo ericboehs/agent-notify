@@ -105,6 +105,16 @@ fi
 # Everything below is macOS-only; on Linux the tmux focus above is the whole job.
 command -v osascript >/dev/null 2>&1 || exit 0
 
+# A pane that no longer exists has no tab worth raising either. Stop before both
+# hops: every tag below is a substring match, and an empty session degrades
+# "$session:" to ":", which matches the first tmux tab in the window - sending a
+# stale click somewhere it was never aimed. Yanking the terminal forward for a
+# pane that is gone is its own small lie.
+if [ -n "$target" ] && [ -z "${session:-}" ]; then
+  flog "stale target $target, terminal left alone"
+  exit 0
+fi
+
 open -a "$app"
 
 
