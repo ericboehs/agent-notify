@@ -7,6 +7,18 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$HOME/bin"
 
+# --pi also builds the branded "Pi Notify.app" bundle and prints pi setup notes.
+# The pi extension (extensions/pi-notify.ts) drives the same backend for the pi
+# coding agent; it needs its own bundle so pi and Claude banners carry distinct
+# icons and do not replace each other.
+WITH_PI=""
+for arg in "$@"; do
+  case "$arg" in
+    --pi) WITH_PI=1 ;;
+    *) echo "Unknown option: $arg" >&2; exit 1 ;;
+  esac
+done
+
 echo "Installing claude-notify..."
 
 mkdir -p "$BIN_DIR"
@@ -24,6 +36,30 @@ done
 if [ "$(uname)" = "Darwin" ]; then
   echo "Building notifier app bundle..."
   "$SCRIPT_DIR/bin/claude-notify-app" || echo "  (skipped - see claude-notify-app output above)"
+  if [ -n "$WITH_PI" ]; then
+    echo "Building Pi notifier app bundle..."
+    CLAUDE_NOTIFY_APP_NAME=Pi CLAUDE_NOTIFY_BUNDLE_ID=com.ericboehs.pi-notify \
+      "$SCRIPT_DIR/bin/claude-notify-app" || echo "  (skipped - see claude-notify-app output above)"
+  fi
+fi
+
+if [ -n "$WITH_PI" ]; then
+cat << EOF
+
+Pi integration:
+
+  Install the extension as a pi package (pins to the current commit):
+
+    pi install git:github.com/ericboehs/claude-notify
+
+  Or load it from this checkout for development:
+
+    pi -e $SCRIPT_DIR/extensions/pi-notify.ts
+
+  The extension announces on agent_settled, suppresses while pi-background-tasks
+  or pi-subagents report active work, and posts through "Pi Notify.app". No hook
+  config is needed for pi.
+EOF
 fi
 
 cat << 'EOF'

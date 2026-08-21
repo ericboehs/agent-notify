@@ -45,6 +45,44 @@ prints the hook configuration to add to `~/.claude/settings.json`:
 To click a banner through to its pane, `.zshrc` has to tell the far end which pane
 an ssh session came from. See [Clicking through, two hops](#clicking-through-two-hops).
 
+## Pi (the pi coding agent)
+
+The same backend also drives notifications for [pi](https://pi.dev). Instead of a
+hook, pi loads an extension (`extensions/pi-notify.ts`) that turns pi lifecycle
+events into the canonical `claude-notify --event` envelope, so tmux targeting,
+visible-pane suppression, forwarding, Slack, and click-through all work exactly as
+they do for Claude Code.
+
+Build the branded `Pi Notify.app` bundle alongside the Claude one:
+
+```bash
+cd ~/Code/claude-notify && ./install.sh --pi
+```
+
+Then install the extension as a pi package (pins to the current commit):
+
+```bash
+pi install git:github.com/ericboehs/claude-notify
+```
+
+or load it from a checkout for development:
+
+```bash
+pi -e ~/Code/claude-notify/extensions/pi-notify.ts
+```
+
+The extension announces on `agent_settled` — pi's authoritative terminal
+watermark, which already accounts for retries, compaction recovery, and queued
+follow-ups. It stays quiet while [`pi-background-tasks`](https://github.com/ismailsaleekh/pi-background-tasks)
+or [`pi-subagents`](https://github.com/nicobailon/pi-subagents) report active work,
+since that work's own completion wakes a later turn that settles and announces.
+No hook configuration is needed for pi.
+
+Pi banners post through `Pi Notify.app` and use a `pi-` notification group, so pi
+and Claude notifications carry distinct icons and never replace each other on the
+same pane.
+
+
 ## The three pieces
 
 | | |
@@ -286,6 +324,10 @@ rm ~/.claude-notify-debug        # stop
 | `CLAUDE_NOTIFY_IMAGE` | Override the banner thumbnail; empty drops it |
 | `CLAUDE_NOTIFY_SLACK` | Post to Slack as well as the desktop; travels in the forwarded payload |
 | `CLAUDE_NOTIFY_SLACK_SLEEP_ONLY` | Slack only when the display is asleep, measured by the receiver |
+| `AGENT_NOTIFY_BIN` | (pi) Explicit path to the `claude-notify` backend, overriding autodiscovery |
+| `AGENT_NOTIFY_APP_NAME` | (pi) App-bundle name to post through (default `Pi` → `Pi Notify.app`) |
+| `AGENT_NOTIFY_EMOJI` | (pi) Slack header emoji for pi banners (default `:robot_face:`) |
+| `AGENT_NOTIFY_IMAGE` | (pi) Override the pi banner thumbnail |
 
 ## Requirements
 

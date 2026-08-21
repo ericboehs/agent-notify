@@ -27,6 +27,14 @@ remote=${3:-}
 # Notification Center spawns this with a bare PATH, so Homebrew is not on it.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
+# Same log the notifier writes to, and the same switch: create
+# ~/.claude-notify-debug to start, delete it to stop. A click either lands on
+# the right pane or it does not, and the difference between "tmux moved and the
+# tab click failed" and "tmux never moved" is otherwise invisible after the fact.
+NOTIFY_DEBUG="$HOME/.claude-notify-debug"
+flog() { [ -e "$NOTIFY_DEBUG" ] && echo "$(date '+%H:%M:%S') tmux-focus $*" >> "$NOTIFY_DEBUG"; return 0; }
+flog "click target=$target app=$app remote=${remote:-none}"
+
 # tab:TEXT addresses a terminal tab directly. There is no local pane to select,
 # so the tmux half is skipped and only the second hop and the tab click run.
 tab_match=""
@@ -37,18 +45,23 @@ esac
 [ -n "$target" ] && ! command -v tmux >/dev/null 2>&1 && exit 0
 
 # Notifications carry a %pane_id where they can, because a pane keeps it for life
-# while its session:window.pane shifts under renames and renumbering. Resolve it
-# to coordinates now, at click time, when it means something.
+# while its session:window.pane shifts under renames and renumbering. Keep the id
+# all the way to select-pane: resolving it to coordinates here and then selecting
+# by those coordinates puts back exactly the race the id was chosen to avoid.
+# With renumber-windows on, one window closing shifts every index after it, so
+# "code:2.1" can name a different pane than the one that asked for attention.
+# tmux resolves a pane id for switch-client, select-window and select-pane alike.
 if [ -n "$target" ]; then
   case "$target" in
-    %*) target=$(tmux display-message -t "$target" -p \
-          '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) ;;
+    %*) pane=$target ;;
+    *)  pane=$(tmux display-message -t "$target" -p '#{pane_id}' 2>/dev/null) ;;
   esac
 
-  session=${target%%:*}
-  window=${target%.*}  # select-window rejects the .pane suffix
+  # Still wanted as text: picking a client is a per-session question, and the
+  # tab tag falls back to the session name further down.
+  session=$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null)
 
-  if [ -n "$target" ] && tmux has-session -t "=$session" 2>/dev/null; then
+  if [ -n "$pane" ] && [ -n "$session" ] && tmux has-session -t "=$session" 2>/dev/null; then
     # Prefer a client already showing this session, so a click never yanks an
     # unrelated window off whatever it was on; otherwise take the most recently
     # active client. Delimit with | because session names may contain spaces.
@@ -57,10 +70,16 @@ if [ -n "$target" ]; then
     [ -n "$client" ] || client=$(tmux list-clients -F '#{client_activity}|#{client_tty}' |
       sort -rn | awk -F'|' 'NR == 1 { print $2 }')
 
+    flog "resolved pane=$pane session=$session client=${client:-none} from=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)"
+
     # Without -c there is no current client to infer, so it would pick arbitrarily.
-    [ -n "$client" ] && tmux switch-client -c "$client" -t "=$session"
-    tmux select-window -t "$window"
-    tmux select-pane -t "$target"
+    [ -n "$client" ] && tmux switch-client -c "$client" -t "$pane"
+    tmux select-window -t "$pane"
+    tmux select-pane -t "$pane"
+
+    flog "after tmux focus=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) target_active=$(tmux display-message -t "$pane" -p '#{pane_active}#{window_active}' 2>/dev/null)"
+  else
+    flog "no tmux move (pane=${pane:-none} session=${session:-none})"
   fi
 fi
 

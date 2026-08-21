@@ -104,6 +104,7 @@ pending_tasks() {
 argv=("$@")
 sender=""
 recv=""
+event=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --sender)
@@ -112,6 +113,13 @@ while [[ $# -gt 0 ]]; do
             ;;
         --recv)
             recv=1
+            shift
+            ;;
+        --event)
+            # Canonical agent-notify envelope on stdin (see the --event block
+            # below). Used by the pi extension so a coding agent other than
+            # Claude Code can drive the same backend without a hook schema.
+            event=1
             shift
             ;;
         --pending-tasks)
@@ -272,7 +280,7 @@ tmux_target="$tmux_pane_id"
 # which only mean something once the layout is memorised. Clicking through lands
 # on the same pane whichever it is.
 session_file=""
-[[ -z "$recv" ]] && session_file=$(claude_session_file "$hook_session_id")
+[[ -z "$recv" && -z "$event" ]] && session_file=$(claude_session_file "$hook_session_id")
 if [[ -n "$session_file" ]]; then
     label=$(jq -r '.name // empty' "$session_file" 2>/dev/null)
     [[ -z "$label" ]] && label=$(claude_ai_title "$(jq -r '.sessionId // empty' "$session_file" 2>/dev/null)")
@@ -564,6 +572,51 @@ send_notification() {
         fi
     fi
 }
+
+# --event: the canonical envelope produced by a non-Claude agent (currently the
+# pi extension). Unlike the Claude hook paths, the label, body and event type
+# arrive pre-resolved by the producer, so there is nothing to scrape from a
+# transcript. The click target is still this pane, exactly like a local Stop.
+#
+# Envelope (JSON on stdin):
+#   { "version": 1, "agent": "pi", "event": "settled|question|attention",
+#     "session_id": "...", "session_name": "...", "cwd": "...",
+#     "message": "...", "slack_body": "...", "subtitle": "..." }
+#
+# message and slack_body are deliberately separate. A banner gets two lines on
+# screen and wants the answer; Slack has room for the whole reply and keeps its
+# line breaks. The producer decides what belongs in each, and slack_body falls
+# back to message when it has nothing extra to say.
+if [[ -n "$event" ]]; then
+    ev=$(echo "$json" | jq -r '.event // "settled"')
+    # Best name first: the name the agent gave the session, else the project
+    # directory's basename, else the tmux coordinates.
+    label=$(echo "$json" | jq -r '.session_name // empty')
+    if [[ -z "$label" ]]; then
+        cwd=$(echo "$json" | jq -r '.cwd // empty')
+        label="${cwd##*/}"
+    fi
+    label="${label:-$tmux_info}"
+    [[ -n "$CLAUDE_NOTIFY_HOST" ]] && label="${CLAUDE_NOTIFY_HOST}:${label}"
+    header="${AGENT_NOTIFY_EMOJI:-:robot_face:} $label"
+    # Key pi banners separately from Claude's so the two agents' notifications
+    # replace within their own agent but never clobber each other on one pane.
+    notify_group="pi-${tmux_target:-$label}"
+    subtitle=$(echo "$json" | jq -r '.subtitle // empty')
+    body=$(echo "$json" | jq -r '.message // empty')
+    [[ -z "$body" ]] && body="Ready for further instruction."
+    slack_body=$(echo "$json" | jq -r '.slack_body // empty')
+    [[ -z "$slack_body" ]] && slack_body="$body"
+    # A question is blocked on an answer, not merely finished: give it the
+    # question glyph unless the caller pinned an explicit image.
+    if [[ "$ev" == "question" || "$ev" == "attention" ]]; then
+        [[ -z "$subtitle" ]] && subtitle="Waiting on your answer"
+        question_icon="$NOTIFIER_APP/Contents/Resources/question.png"
+        [[ -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" && -f "$question_icon" ]] && CLAUDE_NOTIFY_IMAGE="$question_icon"
+    fi
+    send_notification "$subtitle" "$body" "$header" "$slack_body"
+    exit 0
+fi
 
 # --recv: a notification forwarded from another machine's claude-notify. Its
 # label, event and body are settled; what is left is the click target, and that
