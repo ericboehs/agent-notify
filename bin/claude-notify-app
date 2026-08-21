@@ -10,6 +10,12 @@
 # Re-run this after editing the source or to switch terminals:
 #   CLAUDE_NOTIFY_TERMINAL=iTerm claude-notify-app
 #
+# The bundle's icon is the banner's icon. By default it is the terminal's, so a
+# notification looks like it came from the window it is about. A bundle that
+# speaks for an agent rather than for a terminal can say so instead:
+#   CLAUDE_NOTIFY_BUNDLE_ICON=pi claude-notify-app     # draw pi's mark
+#   CLAUDE_NOTIFY_BUNDLE_ICON=/path/to/Some.icns       # bring your own
+#
 # The first notification from a rebuilt bundle can trigger a macOS authorization
 # prompt ("Claude Code" Notifications) - allow it, or the banners stay silent.
 
@@ -25,19 +31,65 @@ SRC="$REPO/lib/claude-notifier.swift"
 [[ -f "$SRC" ]] || { echo "notifier source not found at $SRC" >&2; exit 1; }
 command -v xcrun >/dev/null || { echo "xcrun not found - install the Xcode command line tools" >&2; exit 1; }
 
-# Pull the icon out of the terminal we want the notifications to look like.
-TERM_APP="/Applications/$CLAUDE_NOTIFY_TERMINAL.app"
-[[ -d "$TERM_APP" ]] || TERM_APP="$HOME/Applications/$CLAUDE_NOTIFY_TERMINAL.app"
-[[ -d "$TERM_APP" ]] || { echo "$CLAUDE_NOTIFY_TERMINAL.app not found" >&2; exit 1; }
-icon=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$TERM_APP/Contents/Info.plist" 2>/dev/null)
-icon="${icon%.icns}"
-ICNS="$TERM_APP/Contents/Resources/$icon.icns"
-[[ -f "$ICNS" ]] || { echo "No icon found at $ICNS" >&2; exit 1; }
+# Where the icon comes from. ICNS empty means "generate it below", once there is
+# a bundle to generate it into.
+BUNDLE_ICON="${CLAUDE_NOTIFY_BUNDLE_ICON:-terminal}"
+RENDER_LOGO="$REPO/lib/render-pi-logo.js"
+ICNS=""
+
+case "$BUNDLE_ICON" in
+    pi)
+        [[ -f "$RENDER_LOGO" ]] || { echo "logo renderer not found at $RENDER_LOGO" >&2; exit 1; }
+        command -v iconutil >/dev/null || { echo "iconutil not found" >&2; exit 1; }
+        icon="AppIcon"
+        ;;
+    terminal)
+        # Pull the icon out of the terminal we want the notifications to look like.
+        TERM_APP="/Applications/$CLAUDE_NOTIFY_TERMINAL.app"
+        [[ -d "$TERM_APP" ]] || TERM_APP="$HOME/Applications/$CLAUDE_NOTIFY_TERMINAL.app"
+        [[ -d "$TERM_APP" ]] || { echo "$CLAUDE_NOTIFY_TERMINAL.app not found" >&2; exit 1; }
+        icon=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$TERM_APP/Contents/Info.plist" 2>/dev/null)
+        icon="${icon%.icns}"
+        ICNS="$TERM_APP/Contents/Resources/$icon.icns"
+        [[ -f "$ICNS" ]] || { echo "No icon found at $ICNS" >&2; exit 1; }
+        ;;
+    *)
+        ICNS="$BUNDLE_ICON"
+        [[ -f "$ICNS" ]] || { echo "icon not found at $ICNS" >&2; exit 1; }
+        icon=$(basename "$ICNS" .icns)
+        ;;
+esac
 
 mkdir -p "$HOME/Applications"
 rm -rf "$DEST"
 mkdir -p "$DEST/Contents/MacOS" "$DEST/Contents/Resources"
-cp "$ICNS" "$DEST/Contents/Resources/$icon.icns"
+
+if [[ -n "$ICNS" ]]; then
+    cp "$ICNS" "$DEST/Contents/Resources/$icon.icns"
+else
+    # Render every size from the geometry rather than resampling one big one: the
+    # mark is blocky, and 1024 -> 16 turns its edges to grey mush.
+    work=$(mktemp -d)
+    iconset="$work/$icon.iconset"
+    mkdir -p "$iconset"
+    for px in 16 32 64 128 256 512 1024; do
+        osascript -l JavaScript "$RENDER_LOGO" "$work/$px.png" "$px" >/dev/null
+    done
+    # Each entry is named for its point size; @2x is the same pixels at double.
+    cp "$work/16.png"   "$iconset/icon_16x16.png"
+    cp "$work/32.png"   "$iconset/icon_16x16@2x.png"
+    cp "$work/32.png"   "$iconset/icon_32x32.png"
+    cp "$work/64.png"   "$iconset/icon_32x32@2x.png"
+    cp "$work/128.png"  "$iconset/icon_128x128.png"
+    cp "$work/256.png"  "$iconset/icon_128x128@2x.png"
+    cp "$work/256.png"  "$iconset/icon_256x256.png"
+    cp "$work/512.png"  "$iconset/icon_256x256@2x.png"
+    cp "$work/512.png"  "$iconset/icon_512x512.png"
+    cp "$work/1024.png" "$iconset/icon_512x512@2x.png"
+    iconutil -c icns "$iconset" -o "$DEST/Contents/Resources/$icon.icns"
+    rm -rf "$work"
+    ICNS="(generated: pi mark)"
+fi
 
 # LSUIElement keeps the app out of the Dock and the app switcher: it exists only
 # to post a banner and to be relaunched when one is clicked.
@@ -72,6 +124,17 @@ if [[ -f "$RENDER" ]]; then
     osascript -l JavaScript "$RENDER" \
         questionmark.circle.fill "$DEST/Contents/Resources/question.png" D97757 >/dev/null 2>&1 ||
         echo "  note: question thumbnail failed to render; those banners keep the default one"
+fi
+
+# Thumbnail for pi's banners. A Claude banner puts Claude's mark on the right and
+# leaves the terminal's icon on the left; pi gets the same treatment rather than
+# no thumbnail at all, which is what "not Claude" used to mean. Rendered into
+# every bundle: it costs a few KB, and it keeps the two bundles identical in
+# shape so either can post for either agent.
+if [[ -f "$RENDER_LOGO" ]]; then
+    osascript -l JavaScript "$RENDER_LOGO" \
+        "$DEST/Contents/Resources/pi.png" 256 >/dev/null 2>&1 ||
+        echo "  note: pi thumbnail failed to render; those banners keep the default one"
 fi
 
 # An ad-hoc signature is enough for LaunchServices, and for the notification

@@ -639,6 +639,13 @@ if [[ -n "$event" ]]; then
         [[ -z "$subtitle" ]] && subtitle="Waiting on your answer"
         question_icon="$NOTIFIER_APP/Contents/Resources/question.png"
         [[ -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" && -f "$question_icon" ]] && CLAUDE_NOTIFY_IMAGE="$question_icon"
+    else
+        # Otherwise the agent's own mark, the way a Claude banner carries
+        # Claude's: the app icon on the left stays the terminal's, because the
+        # banner is still about that window. The default is Claude's app icon,
+        # which would be a lie here.
+        agent_icon="$NOTIFIER_APP/Contents/Resources/pi.png"
+        [[ -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" && -f "$agent_icon" ]] && CLAUDE_NOTIFY_IMAGE="$agent_icon"
     fi
     send_notification "$subtitle" "$body" "$header" "$slack_body"
     exit 0

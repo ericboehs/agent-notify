@@ -106,6 +106,29 @@ run_event '{"version":1,"agent":"pi","event":"settled","session_name":"s","messa
 assert_pair -message "pong" "banner uses message, not slack_body"
 teardown
 
+# --- case 6: the agent's mark rides along as the thumbnail ----------------
+# A Claude banner keeps the terminal's icon on the left and puts Claude's mark on
+# the right; a pi banner should do the same with pi's. The bundle ships the
+# rendered mark, so the backend has to find it there and pass it on.
+setup
+mark="$WORK/Applications/$APP_NAME Notify.app/Contents/Resources/pi.png"
+mkdir -p "$(dirname "$mark")" && : > "$mark"
+run_event '{"version":1,"agent":"pi","event":"settled","session_name":"s","message":"hi"}'
+assert_pair -contentImage "$mark" "settled banner carries the pi mark"
+teardown
+
+# --- case 7: an explicit image still wins ---------------------------------
+setup
+mark="$WORK/Applications/$APP_NAME Notify.app/Contents/Resources/pi.png"
+mkdir -p "$(dirname "$mark")" && : > "$mark"
+pinned="$WORK/pinned.png"; : > "$pinned"
+printf '%s' '{"version":1,"agent":"pi","event":"settled","session_name":"s","message":"hi"}' | \
+  env HOME="$WORK" CLAUDE_NOTIFY_FOREGROUND=1 CLAUDE_NOTIFY_APP_NAME="$APP_NAME" \
+      CLAUDE_NOTIFY_SLACK=false CLAUDE_NOTIFY_IMAGE="$pinned" TMUX= TMUX_PANE= \
+      "$NOTIFY" --event >/dev/null 2>&1
+assert_pair -contentImage "$pinned" "an explicit CLAUDE_NOTIFY_IMAGE beats the mark"
+teardown
+
 echo
 echo "protocol: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

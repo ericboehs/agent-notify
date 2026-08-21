@@ -134,7 +134,7 @@ export function bodiesFor(text: string): { message: string; slackMessage: string
 // Compute the environment overrides for the backend given the caller env. Kept
 // pure (env in, env out) so the branching is testable.
 export function notifierEnv(
-  event: NotifyEvent,
+  _event: NotifyEvent,
   base: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
@@ -142,16 +142,12 @@ export function notifierEnv(
     CLAUDE_NOTIFY_APP_NAME: base.AGENT_NOTIFY_APP_NAME || "Pi",
   };
   if (base.AGENT_NOTIFY_EMOJI) env.AGENT_NOTIFY_EMOJI = base.AGENT_NOTIFY_EMOJI;
-  // Drop the Claude-branded default thumbnail for plain completions unless the
-  // user pinned one. Question/attention banners leave it unset so the backend
-  // can apply its own question glyph.
-  if (
-    event === "settled" &&
-    base.CLAUDE_NOTIFY_IMAGE === undefined &&
-    base.AGENT_NOTIFY_IMAGE === undefined
-  ) {
-    env.CLAUDE_NOTIFY_IMAGE = "";
-  } else if (base.AGENT_NOTIFY_IMAGE !== undefined) {
+  // Leave the thumbnail alone unless the user pinned one. The backend fills in
+  // pi's mark for a settled banner and the question glyph for a question, and
+  // setting this here - even to empty - reads as the caller pinning an image and
+  // suppresses both. `event` stays in the signature because which glyph applies
+  // is still an event-shaped question, just one answered further down.
+  if (base.AGENT_NOTIFY_IMAGE !== undefined) {
     env.CLAUDE_NOTIFY_IMAGE = base.AGENT_NOTIFY_IMAGE;
   }
   return env;

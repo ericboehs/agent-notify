@@ -101,10 +101,12 @@ test("bodiesFor returns empty bodies for empty text", () => {
   assert.deepEqual(bodiesFor("  \n "), { message: "", slackMessage: "" });
 });
 
-test("notifierEnv defaults app name to Pi and drops the thumbnail for settled", () => {
+test("notifierEnv leaves the thumbnail to the backend for settled banners", () => {
+  // Setting it here at all - even to empty - would read as the caller pinning an
+  // image, and suppress the pi mark the backend would otherwise supply.
   const env = notifierEnv("settled", {});
   assert.equal(env.CLAUDE_NOTIFY_APP_NAME, "Pi");
-  assert.equal(env.CLAUDE_NOTIFY_IMAGE, "");
+  assert.ok(!("CLAUDE_NOTIFY_IMAGE" in env));
 });
 
 test("notifierEnv keeps the image unset for question banners", () => {
