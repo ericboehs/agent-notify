@@ -302,6 +302,12 @@ fi
 # the pane's thread even as the label follows a rename.
 header=":claude: $label"
 
+# Which agent this notification is about. Claude unless an --event envelope says
+# otherwise, and it travels with a forwarded payload: the receiving machine has
+# no other way to know, and drawing a pi notification out of the Claude bundle
+# puts the wrong name and the wrong mark on someone else's work.
+agent_name="claude"
+
 # Where a click goes after it has focused $tmux_target, as HOST:SESSION:WINDOW.PANE.
 # Only --recv sets it: a forwarded notification's local target is the pane holding
 # the ssh, and this is the pane holding Claude on the far end of it.
@@ -323,6 +329,9 @@ forward_notification() {
 
     payload=$(jq -n \
         --arg label "$label" \
+        --arg agent "$agent_name" \
+        --arg header "$header" \
+        --arg app "${CLAUDE_NOTIFY_APP_NAME:-}" \
         --arg subtitle "$1" \
         --arg message "$2" \
         --arg slack_body "$3" \
@@ -333,6 +342,7 @@ forward_notification() {
         --arg slack "$CLAUDE_NOTIFY_SLACK" \
         --arg slack_away_only "$CLAUDE_NOTIFY_SLACK_AWAY_ONLY" \
         '{label: $label, subtitle: $subtitle, message: $message,
+          agent: $agent, header: $header, app: $app,
           slack_body: $slack_body, origin: $origin, host: $host, target: $target,
           visible: $visible, slack: $slack, slack_away_only: $slack_away_only}')
 
@@ -615,6 +625,9 @@ send_notification() {
 # back to message when it has nothing extra to say.
 if [[ -n "$event" ]]; then
     ev=$(echo "$json" | jq -r '.event // "settled"')
+    # Named by the producer, and it travels: a forwarded notification is drawn on
+    # a machine that never saw this envelope.
+    agent_name=$(echo "$json" | jq -r '.agent // "pi"')
     # Best name first: the name the agent gave the session, else the project
     # directory's basename, else the tmux coordinates.
     label=$(echo "$json" | jq -r '.session_name // empty')
@@ -657,7 +670,33 @@ fi
 # far side running Claude.
 if [[ -n "$recv" ]]; then
     label=$(echo "$json" | jq -r '.label // "Remote"')
-    header=":claude: $label"
+    # Whose notification this is. An older sender says nothing, and everything it
+    # could have sent was Claude's, so that is the fallback.
+    agent_name=$(echo "$json" | jq -r '.agent // "claude"')
+    header=$(echo "$json" | jq -r '.header // empty')
+    [[ -z "$header" ]] && header=":claude: $label"
+    # Draw from the agent's own bundle. macOS takes a notification's name and icon
+    # from whichever bundle posts it, so this is what stops a pi banner arriving
+    # under Claude's name. --recv runs as a forced command with no environment to
+    # speak of, which is why the sender's choice has to ride in the payload rather
+    # than be inherited.
+    recv_app=$(echo "$json" | jq -r '.app // empty')
+    if [[ -n "$recv_app" ]]; then
+        CLAUDE_NOTIFY_APP_NAME="$recv_app"
+        NOTIFIER_APP="$HOME/Applications/$recv_app Notify.app"
+        # The binary path was settled at startup from this machine's own default,
+        # before there was a payload to read, so it has to be re-derived here -
+        # including the terminal-notifier fallback, in case the sender names a
+        # bundle this machine has never built.
+        NOTIFIER="$NOTIFIER_APP/Contents/MacOS/claude-notifier"
+        [[ -x "$NOTIFIER" ]] || NOTIFIER="terminal-notifier"
+    fi
+    # The thumbnail is this machine's to resolve: the sender's path means nothing
+    # here, but the mark lives in the bundle just chosen.
+    if [[ "$agent_name" == "pi" && -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" ]]; then
+        agent_icon="$NOTIFIER_APP/Contents/Resources/pi.png"
+        [[ -f "$agent_icon" ]] && CLAUDE_NOTIFY_IMAGE="$agent_icon"
+    fi
     tmux_target=$(echo "$json" | jq -r '.origin // empty')
     # No pane means the ssh was started from a plain terminal tab rather than
     # from inside a tmux. Nothing to select, so address the tab by the title
@@ -671,9 +710,11 @@ if [[ -n "$recv" ]]; then
     remote_visible=$(echo "$json" | jq -r '.visible // ""')
     remote_focus=$(echo "$json" | jq -r 'if (.host // "") != "" and (.target // "") != ""
                                          then "\(.host):\(.target)" else "" end')
-    # The sender's pane, not ours: it is what tells two Claudes on the same box
-    # apart. Headless there is no pane, so its label stands in.
-    notify_group="claude-$(echo "$json" | jq -r '
+    # The sender's pane, not ours: it is what tells two agents on the same box
+    # apart. Headless there is no pane, so its label stands in. Keyed by agent as
+    # well, so pi and Claude forwarding from one machine cannot replace each
+    # other's banners.
+    notify_group="$agent_name-$(echo "$json" | jq -r '
         (.host // "remote") + "-" +
         (if (.target // "") != "" then .target else (.label // "") end)')"
     # Whether to post to Slack at all is the sender's call; whether anyone is

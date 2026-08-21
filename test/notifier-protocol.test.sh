@@ -148,6 +148,30 @@ if [ -x /bin/bash ]; then
   done
 fi
 
+# --- case 9: a forwarded pi notification keeps pi's identity --------------
+# The receiving machine never saw the envelope, and --recv runs as an ssh forced
+# command with no environment. If the agent does not travel in the payload, a pi
+# notification is drawn out of the Claude bundle: Claude's name, Claude's mark.
+setup
+mark="$WORK/Applications/$APP_NAME Notify.app/Contents/Resources/pi.png"
+mkdir -p "$(dirname "$mark")" && : > "$mark"
+printf '%s' "{\"label\":\"coop:api\",\"agent\":\"pi\",\"app\":\"$APP_NAME\",\"header\":\":robot_face: coop:api\",\"message\":\"hi\",\"host\":\"coop\",\"target\":\"w:1.0\"}" | \
+  env HOME="$WORK" CLAUDE_NOTIFY_FOREGROUND=1 CLAUDE_NOTIFY_SLACK=false \
+      TMUX= TMUX_PANE= "$NOTIFY" --recv >/dev/null 2>&1
+assert_pair -contentImage "$mark" "a forwarded pi notification keeps pi's mark"
+assert_prefix -group "pi-" "a forwarded pi notification groups under pi"
+teardown
+
+# --- case 10: a forwarded Claude notification is unchanged ----------------
+# Older senders forward no agent at all, and everything they could send was
+# Claude's, so silence has to keep meaning Claude.
+setup
+printf '%s' '{"label":"coop:api","message":"hi","host":"coop","target":"w:1.0"}' | \
+  env HOME="$WORK" CLAUDE_NOTIFY_FOREGROUND=1 CLAUDE_NOTIFY_SLACK=false \
+      CLAUDE_NOTIFY_APP_NAME="$APP_NAME" TMUX= TMUX_PANE= "$NOTIFY" --recv >/dev/null 2>&1
+assert_prefix -group "claude-" "a payload with no agent still reads as Claude"
+teardown
+
 echo
 echo "protocol: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
