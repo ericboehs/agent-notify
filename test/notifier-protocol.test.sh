@@ -129,6 +129,25 @@ printf '%s' '{"version":1,"agent":"pi","event":"settled","session_name":"s","mes
 assert_pair -contentImage "$pinned" "an explicit CLAUDE_NOTIFY_IMAGE beats the mark"
 teardown
 
+# --- case 8: the scripts must parse under the bash the bundle actually gets ---
+# A clicked notification runs through /bin/sh with a minimal PATH, so
+# `#!/usr/bin/env bash` resolves to /bin/bash 3.2 rather than whatever modern
+# bash sits on an interactive PATH. Syntax only 4+ accepts parses fine in
+# development and dies at the click, after the tmux hop has already logged
+# success - which looks exactly like a permissions problem.
+if [ -x /bin/bash ]; then
+  legacy=$(/bin/bash --version | head -1 | sed 's/.*version \([0-9.]*\).*/\1/')
+  for f in "$REPO"/bin/*; do
+    if /bin/bash -n "$f" 2>/dev/null; then
+      echo "PASS: $(basename "$f") parses under /bin/bash $legacy"
+      pass=$((pass + 1))
+    else
+      echo "FAIL: $(basename "$f") does not parse under /bin/bash $legacy"
+      fail=$((fail + 1))
+    fi
+  done
+fi
+
 echo
 echo "protocol: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

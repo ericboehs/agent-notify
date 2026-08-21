@@ -160,12 +160,23 @@ else
   tags+=("$session:" tmux)
 fi
 
-osascript - "$app" "${tags[@]}" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+# The tab hop is the one that fails invisibly: a revoked Accessibility grant and
+# a tag that matched nothing look identical from out here, and both leave you on
+# the wrong tab. So the script reports what it did, and that goes to the same log
+# as the rest rather than being discarded.
+#
+# Via a temp file rather than $(osascript ... <<EOF): bash 3.2 mis-parses a
+# heredoc inside a command substitution, scanning the body for shell quotes and
+# choking on the apostrophe below. That matters because the notifier bundle
+# launches this through /bin/sh with a minimal PATH, where `env bash` finds
+# /bin/bash 3.2 - not whatever modern bash sits on an interactive PATH.
+focus_out=$(mktemp -t tmux-focus)
+osascript - "$app" "${tags[@]}" >"$focus_out" 2>&1 <<'APPLESCRIPT' || true
 on run argv
   set appName to item 1 of argv
   set tags to rest of argv
   tell application "System Events"
-    if not (exists process appName) then return
+    if not (exists process appName) then return "no process " & appName
     tell process appName
       -- Address every element by index. System Events hands back element
       -- references keyed by *name*, and selecting a tab renames the window it
@@ -176,19 +187,22 @@ on run argv
           if exists tab group 1 of window w then
             repeat with t from 1 to (count of radio buttons of tab group 1 of window w)
               if my matches(title of radio button t of tab group 1 of window w, tag) then
+                set act to "already-on"
                 if value of radio button t of tab group 1 of window w is false then
                   click radio button t of tab group 1 of window w
+                  set act to "clicked"
                 end if
                 perform action "AXRaise" of window w
-                return
+                return act & " win" & w & " tab" & t & " tag=" & (tag as text)
               end if
             end repeat
           else if my matches(title of window w, tag) then
             perform action "AXRaise" of window w
-            return
+            return "raised win" & w & " tag=" & (tag as text)
           end if
         end repeat
       end repeat
+      return "no tab matched"
     end tell
   end tell
 end run
@@ -200,3 +214,5 @@ on matches(t, tag)
   return t contains tag
 end matches
 APPLESCRIPT
+flog "tab hop tags=[${tags[*]}] result=$(tr '\n' ' ' < "$focus_out")"
+rm -f "$focus_out"
