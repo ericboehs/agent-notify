@@ -7,7 +7,8 @@ export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 # Enable/disable Slack notifications (defaults to true)
 # CLAUDE_NOTIFY_SLACK=false        - never send Slack notifications
-# CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=true - only send when display is asleep (AFK)
+# CLAUDE_NOTIFY_SLACK_AWAY_ONLY=true - only send when away: display asleep, or
+#                                    someone driving this Mac over VNC
 #                                    (both travel with a forwarded notification,
 #                                     so set them on the machine Claude runs on)
 # CLAUDE_NOTIFY_HOST=gfe            - prefix the session label (e.g. "gfe:hd-recovery")
@@ -25,7 +26,10 @@ export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 #                                    ~/.ssh/authorized_keys so the sending box's key can do
 #                                    this and nothing else.
 CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
-CLAUDE_NOTIFY_SLACK_SLEEP_ONLY="${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}"
+# Slack is the away channel: a banner is for when you are here, Slack is for when
+# you are not. SLEEP_ONLY is the old name from when a dark display was the only
+# thing we knew how to measure; it still works.
+CLAUDE_NOTIFY_SLACK_AWAY_ONLY="${CLAUDE_NOTIFY_SLACK_AWAY_ONLY:-${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}}"
 # CLAUDE_NOTIFY_PERMISSION=true - banner the Notification event too: a permission
 #                                 or approval prompt. Off by default. Running with
 #                                 auto-approval makes one rare, and the one that does
@@ -327,10 +331,10 @@ forward_notification() {
         --arg target "$tmux_target" \
         --arg visible "$(pane_visible_in_tmux && echo 1 || echo 0)" \
         --arg slack "$CLAUDE_NOTIFY_SLACK" \
-        --arg slack_sleep_only "$CLAUDE_NOTIFY_SLACK_SLEEP_ONLY" \
+        --arg slack_away_only "$CLAUDE_NOTIFY_SLACK_AWAY_ONLY" \
         '{label: $label, subtitle: $subtitle, message: $message,
           slack_body: $slack_body, origin: $origin, host: $host, target: $target,
-          visible: $visible, slack: $slack, slack_sleep_only: $slack_sleep_only}')
+          visible: $visible, slack: $slack, slack_away_only: $slack_away_only}')
 
     nlog "forwarding to $CLAUDE_NOTIFY_FORWARD"
     for host in ${CLAUDE_NOTIFY_FORWARD//,/ }; do
@@ -376,6 +380,27 @@ cg.CGDisplayIsAsleep.restype = ctypes.c_int
 cg.CGDisplayIsAsleep.argtypes = [ctypes.c_uint32]
 exit(0 if cg.CGDisplayIsAsleep(cg.CGMainDisplayID()) else 1)
 " 2>/dev/null
+}
+
+# True when a Screen Sharing/VNC client is driving this Mac. That is a form of
+# away, not presence: the connection comes from a phone, zoomed into a corner of
+# a desktop whose banners are mostly off-screen.
+vnc_session_active() {
+    # Spawned per connection, gone with the last one.
+    pgrep -x screensharingd >/dev/null 2>&1 && return 0
+    # A client that does not go through Apple's daemon still has to hold the
+    # port open; same evidence, one layer down.
+    netstat -an 2>/dev/null | awk '
+        $1 ~ /^tcp/ && $4 ~ /\.5900$/ && $6 == "ESTABLISHED" { found = 1; exit }
+        END { exit !found }
+    '
+}
+
+# The question Slack actually cares about. A dark display is only half of it:
+# someone can be driving this Mac from a phone with the screen off at the desk.
+user_is_away() {
+    is_display_asleep && return 0
+    vnc_session_active
 }
 
 # True when the pane this notification is about is already on screen. Every step
@@ -556,12 +581,13 @@ send_notification() {
 
     # Send Slack notification if enabled (with deduplication)
     # CLAUDE_NOTIFY_SLACK=false disables all Slack notifications
-    # CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=true only sends when display is asleep
+    # CLAUDE_NOTIFY_SLACK_AWAY_ONLY=true sends only when away (asleep or VNC)
     if [[ "$CLAUDE_NOTIFY_SLACK" == "true" ]]; then
         local should_send=true
-        if [[ "$CLAUDE_NOTIFY_SLACK_SLEEP_ONLY" == "true" ]]; then
-            if ! is_display_asleep; then
+        if [[ "$CLAUDE_NOTIFY_SLACK_AWAY_ONLY" == "true" ]]; then
+            if ! user_is_away; then
                 should_send=false
+                nlog "slack skipped, not away"
             fi
         fi
         if [[ "$should_send" == "true" ]]; then
@@ -643,10 +669,12 @@ if [[ -n "$recv" ]]; then
     notify_group="claude-$(echo "$json" | jq -r '
         (.host // "remote") + "-" +
         (if (.target // "") != "" then .target else (.label // "") end)')"
-    # Whether to post to Slack at all is the sender's call; whether the display
-    # is asleep is still ours to measure, so only the policy travels.
+    # Whether to post to Slack at all is the sender's call; whether anyone is
+    # here to see a banner is still ours to measure, so only the policy travels.
+    # slack_sleep_only is what an older sender calls the same field.
     CLAUDE_NOTIFY_SLACK=$(echo "$json" | jq -r '.slack // "true"')
-    CLAUDE_NOTIFY_SLACK_SLEEP_ONLY=$(echo "$json" | jq -r '.slack_sleep_only // "false"')
+    CLAUDE_NOTIFY_SLACK_AWAY_ONLY=$(echo "$json" |
+        jq -r '.slack_away_only // .slack_sleep_only // "false"')
     send_notification \
         "$(echo "$json" | jq -r '.subtitle // empty')" \
         "$(echo "$json" | jq -r '.message // empty')" \

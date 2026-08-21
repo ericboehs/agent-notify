@@ -165,9 +165,9 @@ restrict,command="/Users/you/bin/claude-notify --recv" ssh-ed25519 AAAA… notif
 
 A forced command inherits no environment, which is why `--recv` re-exports a PATH
 and why both Slack knobs travel *in the payload*: set `CLAUDE_NOTIFY_SLACK` and
-`CLAUDE_NOTIFY_SLACK_SLEEP_ONLY` on the machine Claude runs on, not on the Mac.
-Whether the display is asleep stays the receiver's question, since it is the only
-one that can measure it.
+`CLAUDE_NOTIFY_SLACK_AWAY_ONLY` on the machine Claude runs on, not on the Mac.
+Whether anyone is around to see a banner stays the receiver's question, since it
+is the only one that can measure it.
 
 `restrict` is carrying weight here, not decoration: it refuses a pty, port
 forwarding, agent forwarding and the rest, and `command=` replaces whatever the
@@ -337,7 +337,7 @@ rm ~/.claude-notify-debug        # stop
 | `CLAUDE_NOTIFY_PERMISSION` | Bring the vague permission notifications back |
 | `CLAUDE_NOTIFY_IMAGE` | Override the banner thumbnail; empty drops it |
 | `CLAUDE_NOTIFY_SLACK` | Post to Slack as well as the desktop; travels in the forwarded payload |
-| `CLAUDE_NOTIFY_SLACK_SLEEP_ONLY` | Slack only when the display is asleep, measured by the receiver |
+| `CLAUDE_NOTIFY_SLACK_AWAY_ONLY` | Slack only when away — display asleep or a VNC session — measured by the receiver (old name: `CLAUDE_NOTIFY_SLACK_SLEEP_ONLY`) |
 | `AGENT_NOTIFY_BIN` | (pi) Explicit path to the `claude-notify` backend, overriding autodiscovery |
 | `AGENT_NOTIFY_APP_NAME` | (pi) App-bundle name to post through (default `Pi` → `Pi Notify.app`) |
 | `AGENT_NOTIFY_EMOJI` | (pi) Slack header emoji for pi banners (default `:robot_face:`) |
