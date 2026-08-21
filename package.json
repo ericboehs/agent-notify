@@ -1,0 +1,30 @@
+{
+  "name": "claude-notify",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Desktop and Slack notifications for coding agents (Claude Code hooks + pi lifecycle events) with tmux pane targeting, visible-pane suppression, SSH forwarding, and click-through.",
+  "keywords": [
+    "pi-package",
+    "claude-code",
+    "notifications",
+    "tmux",
+    "slack"
+  ],
+  "license": "MIT",
+  "author": "Eric Boehs",
+  "scripts": {
+    "test": "node --test test/*.test.ts && bash test/notifier-protocol.test.sh"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ericboehs/claude-notify"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/pi-notify.ts"
+    ]
+  }
+}
