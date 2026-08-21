@@ -71,6 +71,20 @@ or load it from a checkout for development:
 pi -e ~/Code/claude-notify/extensions/pi-notify.ts
 ```
 
+or symlink it in, so every session picks it up and edits to the checkout are live:
+
+```bash
+ln -s ~/Code/claude-notify/extensions/pi-notify.ts ~/.pi/agent/extensions/
+```
+
+The extension is deliberately a single file so that last one works: pi resolves
+an extension's relative imports against the symlink path, not its target, so a
+helper module next to it in the checkout would not be found.
+
+Installed by symlink the extension cannot see the checkout it came from, so it
+looks for the backend at `~/bin/claude-notify` (what `install.sh` creates). If it
+lives somewhere else, point `AGENT_NOTIFY_BIN` at it.
+
 The extension announces on `agent_settled` — pi's authoritative terminal
 watermark, which already accounts for retries, compaction recovery, and queued
 follow-ups. It stays quiet while [`pi-background-tasks`](https://github.com/ismailsaleekh/pi-background-tasks)

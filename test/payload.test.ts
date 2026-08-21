@@ -1,9 +1,9 @@
 // Unit tests for the pure pi-notify helpers.
-// Run: node --test test/   (Node 23.6+ strips TypeScript types natively)
+// Run: node --test test/*.test.ts   (Node 23.6+ strips TypeScript types natively)
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import {
@@ -16,7 +16,7 @@ import {
   firstParagraph,
   notifierEnv,
   SLACK_MAX,
-} from "../extensions/lib/payload.ts";
+} from "../extensions/pi-notify.ts";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -122,12 +122,29 @@ test("notifierEnv honours AGENT_NOTIFY_APP_NAME and AGENT_NOTIFY_IMAGE overrides
 });
 
 test("findNotifier resolves the backend shipped alongside the extension", () => {
-  // Simulate import.meta.url of extensions/pi-notify.ts's helper module.
-  const moduleUrl = pathToFileURL(
-    join(repoRoot, "extensions", "lib", "payload.ts"),
-  ).href;
-  const resolved = findNotifier(moduleUrl);
-  assert.equal(resolved, join(repoRoot, "bin", "claude-notify"));
+  const prev = process.env.AGENT_NOTIFY_BIN;
+  delete process.env.AGENT_NOTIFY_BIN;
+  try {
+    const resolved = findNotifier(join(repoRoot, "extensions", "pi-notify.ts"));
+    assert.equal(resolved, join(repoRoot, "bin", "claude-notify"));
+  } finally {
+    if (prev !== undefined) process.env.AGENT_NOTIFY_BIN = prev;
+  }
+});
+
+test("findNotifier does not invent a sibling that is not there", () => {
+  // What a symlink install looks like from inside the loader: it reports the
+  // link path, and ../bin under it does not exist. The fallback may legitimately
+  // find ~/bin/claude-notify; what it must never do is answer from a directory
+  // it never confirmed.
+  const prev = process.env.AGENT_NOTIFY_BIN;
+  delete process.env.AGENT_NOTIFY_BIN;
+  try {
+    const resolved = findNotifier("/nonexistent/extensions/pi-notify.ts");
+    assert.ok(resolved === undefined || !resolved.startsWith("/nonexistent"));
+  } finally {
+    if (prev !== undefined) process.env.AGENT_NOTIFY_BIN = prev;
+  }
 });
 
 test("findNotifier honours AGENT_NOTIFY_BIN when the path exists", () => {
