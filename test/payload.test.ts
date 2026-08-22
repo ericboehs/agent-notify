@@ -12,7 +12,7 @@ import {
   BODY_MAX,
   buildEnvelope,
   clampForSlack,
-  condense,
+  clampForBanner,
   findNotifier,
   notifierEnv,
   SLACK_MAX,
@@ -45,14 +45,16 @@ test("assistantText ignores non-assistant roles and junk", () => {
   assert.equal(assistantText({ role: "assistant", content: 42 }), "");
 });
 
-test("condense flows text into one line and bounds it only for transport", () => {
-  assert.equal(condense("a\n\n  b\t c "), "a b c");
+test("clampForBanner keeps the reply's shape and bounds it only for transport", () => {
+  // Line breaks survive: Notification Center renders them, and a verse or a
+  // list is unreadable flowed into one paragraph.
+  assert.equal(clampForBanner("  a\n\nb\nc "), "a\n\nb\nc");
   // A reply far longer than a banner can show still travels whole - Notification
   // Center decides where to stop, which is the entire point of the large bound.
   const realistic = "x".repeat(600);
-  assert.equal(condense(realistic), realistic);
+  assert.equal(clampForBanner(realistic), realistic);
   const huge = "x".repeat(BODY_MAX + 200);
-  const out = condense(huge);
+  const out = clampForBanner(huge);
   assert.equal(out.length, BODY_MAX);
   assert.ok(out.endsWith("…"));
 });
@@ -80,13 +82,14 @@ test("clampForSlack preserves newlines and bounds length", () => {
   assert.ok(out.endsWith("\u2026"));
 });
 
-test("bodiesFor sends the whole reply to the banner, flowed into one line", () => {
+test("bodiesFor hands the whole reply to the banner, shape intact", () => {
   // The exact shape Eric's AGENTS.md produces: answer, then a Next steps block.
-  // Both belong on the banner - Notification Center decides how much fits.
+  // All of it belongs on the banner - Notification Center decides how much fits.
   const reply = "pong\n\nNext steps:\n1. Run a health check\n2. Pick a task";
   const { message, slackMessage } = bodiesFor(reply);
-  assert.equal(message, "pong Next steps: 1. Run a health check 2. Pick a task");
-  assert.equal(slackMessage, reply);
+  assert.equal(message, reply);
+  // Identical bodies mean nothing extra to ship; the backend reuses message.
+  assert.equal(slackMessage, "");
 });
 
 test("bodiesFor omits a duplicate Slack body for single-paragraph replies", () => {

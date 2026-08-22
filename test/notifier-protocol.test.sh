@@ -21,10 +21,15 @@ setup() {
   mkdir -p "$app" "$WORK/.claude/manager"
   CAPTURE="$WORK/capture"
   # Stub notifier: record every argument, one per line, then exit 0.
+  # A second copy separates arguments with a record separator instead of a
+  # newline, because a banner body legitimately contains newlines and the
+  # line-per-argument file cannot tell those apart from the next argument.
+  CAPTURE_RS="$WORK/capture.rs"
   cat > "$app/claude-notifier" <<STUB
 #!/usr/bin/env bash
 : > "$CAPTURE"
-for a in "\$@"; do printf '%s\n' "\$a" >> "$CAPTURE"; done
+: > "$CAPTURE_RS"
+for a in "\$@"; do printf '%s\n' "\$a" >> "$CAPTURE"; printf '%s\036' "\$a" >> "$CAPTURE_RS"; done
 STUB
   chmod +x "$app/claude-notifier"
 }
@@ -57,6 +62,32 @@ assert_pair() {
   else
     echo "FAIL: $desc (expected '$value', got '$line')"; fail=$((fail + 1))
   fi
+}
+
+# Assert a "--flag value" pair whose value may itself contain newlines. Reads the
+# record-separated capture, so a multi-line body compares as the single argument
+# it actually was.
+assert_pair_exact() {
+  local flag="$1" value="$2" desc="$3"
+  local data oldifs i
+  data=$(cat "$CAPTURE_RS" 2>/dev/null)
+  oldifs="$IFS"
+  set -f
+  IFS=$'\036'
+  local args=($data)
+  set +f
+  IFS="$oldifs"
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    if [[ "${args[$i]}" == "$flag" ]]; then
+      if [[ "${args[$((i + 1))]}" == "$value" ]]; then
+        echo "PASS: $desc"; pass=$((pass + 1))
+      else
+        echo "FAIL: $desc (expected '$value', got '${args[$((i + 1))]}')"; fail=$((fail + 1))
+      fi
+      return
+    fi
+  done
+  echo "FAIL: $desc (no $flag in argv)"; fail=$((fail + 1))
 }
 
 assert_prefix() {
@@ -172,18 +203,18 @@ printf '%s' '{"label":"coop:api","message":"hi","host":"coop","target":"w:1.0"}'
 assert_prefix -group "claude-" "a payload with no agent still reads as Claude"
 teardown
 
-# --- case 11: a long reply reaches the banner whole -----------------------
-# The banner body used to be cut to its first paragraph before it ever left pi,
-# which threw away the part of a reply that answers the question whenever an
-# agent opens with a one-line summary. Notification Center already truncates to
-# whatever it has room for, and it is the only party that knows how much that is,
-# so the backend must hand over every character it was given.
+# --- case 11: a long reply reaches the banner whole, shape intact ---------
+# The banner body used to be cut to its first paragraph and then flowed into a
+# single line, so a verse or a list arrived as neither. Notification Center
+# renders line breaks and truncates on its own, and it is the only party that
+# knows how much room it has, so the backend hands over what it was given.
+# Blockquote markers go the way of the other markdown: plain text draws them
+# literally, and "> " down the left margin is noise where words could be.
 setup
-long="All green. The banner now carries the whole reply instead of stopping at the \
-first blank line, so a Next steps block travels with it and Notification Center \
-decides where to cut rather than pi guessing on its behalf."
-run_event "$(printf '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":"%s"}' "$long")"
-assert_pair -message "$long" "a long reply reaches the banner whole"
+long=$'> All green, and the shape survives:\n> first line, then a second,\n\nand a closing note.'
+want=$'All green, and the shape survives:\nfirst line, then a second,\n\nand a closing note.'
+run_event "$(printf '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":%s}' "$(printf '%s' "$long" | jq -Rs .)")"
+assert_pair_exact -message "$want" "a multi-line reply keeps its line breaks, minus the quote markers"
 teardown
 
 echo
