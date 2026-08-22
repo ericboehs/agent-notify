@@ -172,6 +172,20 @@ printf '%s' '{"label":"coop:api","message":"hi","host":"coop","target":"w:1.0"}'
 assert_prefix -group "claude-" "a payload with no agent still reads as Claude"
 teardown
 
+# --- case 11: a long reply reaches the banner whole -----------------------
+# The banner body used to be cut to its first paragraph before it ever left pi,
+# which threw away the part of a reply that answers the question whenever an
+# agent opens with a one-line summary. Notification Center already truncates to
+# whatever it has room for, and it is the only party that knows how much that is,
+# so the backend must hand over every character it was given.
+setup
+long="All green. The banner now carries the whole reply instead of stopping at the \
+first blank line, so a Next steps block travels with it and Notification Center \
+decides where to cut rather than pi guessing on its behalf."
+run_event "$(printf '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":"%s"}' "$long")"
+assert_pair -message "$long" "a long reply reaches the banner whole"
+teardown
+
 echo
 echo "protocol: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

@@ -37,7 +37,12 @@ import { dirname, join } from "node:path";
 // Pure helpers (plain data in, plain data out; unit-tested without pi)
 // ---------------------------------------------------------------------------
 
-export const BODY_MAX = 400;
+// A banner body is bounded only so a runaway reply does not travel as argv and,
+// on a forwarded notification, as JSON over ssh - it is a transport guard, not a
+// display decision. Notification Center cuts the text off long before this, and
+// it knows how much room it has; guessing on its behalf here only threw away
+// words it would have shown.
+export const BODY_MAX = 2000;
 // Slack renders the whole reply, so it gets a far larger bound than a banner and
 // keeps its line breaks. Still bounded: a runaway reply should not become a wall
 // of text in a shared channel.
@@ -64,20 +69,13 @@ export function assistantText(message: unknown): string {
   return parts.join("").trim();
 }
 
+// Collapse to a single run of text. Notification Center honours line breaks, so
+// a reply that opens with a short line and a blank one would spend the two lines
+// it gives on almost nothing; flowed as one paragraph, the same space carries a
+// sentence or two of the actual answer.
 export function condense(text: string): string {
   const oneLine = text.replace(/\s+/g, " ").trim();
   return oneLine.length > BODY_MAX ? `${oneLine.slice(0, BODY_MAX - 1)}…` : oneLine;
-}
-
-// The banner wants the answer, not the whole reply. A model that ends every turn
-// with a "Next steps" block (or any other standing instruction) would otherwise
-// push the actual result off the two lines macOS gives us. The first paragraph is
-// the general rule that handles it without pattern-matching anyone's prose.
-export function firstParagraph(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  const [first] = trimmed.split(/\n[ \t]*\n/);
-  return (first ?? trimmed).trim();
 }
 
 // Slack body: keep the line breaks that make a list a list, bound the length.
@@ -125,7 +123,7 @@ export function buildEnvelope(input: EnvelopeInput): Envelope {
 // Split one assistant reply into the two bodies the backend wants.
 export function bodiesFor(text: string): { message: string; slackMessage: string } {
   if (!text.trim()) return { message: "", slackMessage: "" };
-  const banner = condense(firstParagraph(text));
+  const banner = condense(text);
   const slack = clampForSlack(text);
   // No point shipping a duplicate when the reply was a single paragraph.
   return { message: banner, slackMessage: slack === banner ? "" : slack };

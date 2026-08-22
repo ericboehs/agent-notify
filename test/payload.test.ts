@@ -9,11 +9,11 @@ import { dirname, join } from "node:path";
 import {
   assistantText,
   bodiesFor,
+  BODY_MAX,
   buildEnvelope,
   clampForSlack,
   condense,
   findNotifier,
-  firstParagraph,
   notifierEnv,
   SLACK_MAX,
 } from "../extensions/pi-notify.ts";
@@ -45,11 +45,15 @@ test("assistantText ignores non-assistant roles and junk", () => {
   assert.equal(assistantText({ role: "assistant", content: 42 }), "");
 });
 
-test("condense collapses whitespace and truncates long text", () => {
+test("condense flows text into one line and bounds it only for transport", () => {
   assert.equal(condense("a\n\n  b\t c "), "a b c");
-  const long = "x".repeat(500);
-  const out = condense(long);
-  assert.equal(out.length, 400);
+  // A reply far longer than a banner can show still travels whole - Notification
+  // Center decides where to stop, which is the entire point of the large bound.
+  const realistic = "x".repeat(600);
+  assert.equal(condense(realistic), realistic);
+  const huge = "x".repeat(BODY_MAX + 200);
+  const out = condense(huge);
+  assert.equal(out.length, BODY_MAX);
   assert.ok(out.endsWith("…"));
 });
 
@@ -67,13 +71,6 @@ test("buildEnvelope fills defaults and pins version/agent", () => {
   });
 });
 
-test("firstParagraph keeps only the text before the first blank line", () => {
-  assert.equal(firstParagraph("pong\n\nNext steps: 1. a 2. b"), "pong");
-  assert.equal(firstParagraph("line one\nline two\n\nlater"), "line one\nline two");
-  assert.equal(firstParagraph("only one paragraph"), "only one paragraph");
-  assert.equal(firstParagraph("   "), "");
-});
-
 test("clampForSlack preserves newlines and bounds length", () => {
   const listy = "pong\n\nNext steps:\n1. a\n2. b";
   assert.equal(clampForSlack(listy), listy);
@@ -83,11 +80,12 @@ test("clampForSlack preserves newlines and bounds length", () => {
   assert.ok(out.endsWith("\u2026"));
 });
 
-test("bodiesFor sends the answer to the banner and the whole reply to Slack", () => {
+test("bodiesFor sends the whole reply to the banner, flowed into one line", () => {
   // The exact shape Eric's AGENTS.md produces: answer, then a Next steps block.
+  // Both belong on the banner - Notification Center decides how much fits.
   const reply = "pong\n\nNext steps:\n1. Run a health check\n2. Pick a task";
   const { message, slackMessage } = bodiesFor(reply);
-  assert.equal(message, "pong");
+  assert.equal(message, "pong Next steps: 1. Run a health check 2. Pick a task");
   assert.equal(slackMessage, reply);
 });
 
