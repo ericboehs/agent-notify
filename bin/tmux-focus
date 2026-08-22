@@ -138,10 +138,17 @@ open -a "$app"
 # happened, and it needs the calling app to hold Accessibility permission.
 if [ -n "$tab_match" ]; then
   # A bare ssh tab is titled by its command ("ssh coop"), so pass 1 matches that
-  # exactly and pass 2 settles for the bare hostname — enough to survive the tab
-  # being renamed by a remote tmux that sets titles.
+  # exactly. Once a remote tmux attaches it renames the tab out from under that,
+  # to its own set-titles-string - so pass 2 looks for the hostname the remote
+  # tmux puts in front, and pass 3 settles for the bare hostname, which is all an
+  # older remote's title will carry.
+  #
+  # The bare form is last because it is the loose one: it matches any tab with the
+  # word in it, including a local pane that merely happens to be named after the
+  # box. Anything more specific gets to answer first.
   tags=("$tab_match")
-  [ -n "${remote%%:*}" ] && tags+=("${remote%%:*}")
+  rhost_tag="${remote%%:*}"
+  [ -n "$rhost_tag" ] && tags+=("$rhost_tag:" "$rhost_tag")
 else
   tags=()
   if [ -n "$target" ]; then
