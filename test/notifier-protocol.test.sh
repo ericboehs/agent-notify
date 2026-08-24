@@ -102,6 +102,17 @@ assert_prefix() {
   fi
 }
 
+assert_json_field() {
+  local file="$1" filter="$2" expected="$3" desc="$4"
+  local actual
+  actual=$(jq -r "$filter" "$file" 2>/dev/null)
+  if [[ "$actual" == "$expected" ]]; then
+    echo "PASS: $desc"; pass=$((pass + 1))
+  else
+    echo "FAIL: $desc (expected '$expected', got '$actual')"; fail=$((fail + 1))
+  fi
+}
+
 # --- case 1: named session ------------------------------------------------
 setup
 run_event '{"version":1,"agent":"pi","event":"settled","session_name":"hd-recovery","cwd":"/x/proj","message":"All tests pass."}'
@@ -215,6 +226,99 @@ long=$'> All green, and the shape survives:\n> first line, then a second,\n\nand
 want=$'All green, and the shape survives:\nfirst line, then a second,\n\nand a closing note.'
 run_event "$(printf '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":%s}' "$(printf '%s' "$long" | jq -Rs .)")"
 assert_pair_exact -message "$want" "a multi-line reply keeps its line breaks, minus the quote markers"
+teardown
+
+# --- case 12: the agent-neutral origin pane wins over the legacy alias -----
+setup
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/ssh" <<STUB
+#!/usr/bin/env bash
+cat > "$WORK/forwarded"
+STUB
+chmod +x "$WORK/bin/ssh"
+printf '%s' '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":"hi"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_FORWARD=receiver \
+      AGENT_NOTIFY_SLACK=false LC_AGENT_NOTIFY_PANE=%new LC_CLAUDE_PANE=%old \
+      TMUX= TMUX_PANE= "$NOTIFY" --event >/dev/null 2>&1
+assert_json_field "$WORK/forwarded" .origin %new \
+  "LC_AGENT_NOTIFY_PANE takes precedence over the legacy alias"
+teardown
+
+# --- case 13: the old origin variable remains a compatibility fallback -----
+setup
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/ssh" <<STUB
+#!/usr/bin/env bash
+cat > "$WORK/forwarded"
+STUB
+chmod +x "$WORK/bin/ssh"
+printf '%s' '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":"hi"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_FORWARD=receiver \
+      AGENT_NOTIFY_SLACK=false LC_CLAUDE_PANE=%legacy \
+      TMUX= TMUX_PANE= "$NOTIFY" --event >/dev/null 2>&1
+assert_json_field "$WORK/forwarded" .origin %legacy \
+  "LC_CLAUDE_PANE remains a compatibility fallback"
+teardown
+
+# --- case 14: per-tty state prefers the agent-notify directory -------------
+setup
+mkdir -p "$WORK/bin" "$WORK/.agent-notify/origin" "$WORK/.claude/origin"
+cat > "$WORK/bin/ssh" <<STUB
+#!/usr/bin/env bash
+cat > "$WORK/forwarded"
+STUB
+cat > "$WORK/bin/tmux" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  list-clients) printf '1|/dev/ttys001\n' ;;
+  display-message)
+    case "$*" in
+      *'#{session_name}'*) printf 'code\n' ;;
+      *'#{pane_active} #{window_active} #{session_attached}'*) printf '1 1 1\n' ;;
+      *) printf 'code:1.0\n' ;;
+    esac
+    ;;
+esac
+STUB
+chmod +x "$WORK/bin/ssh" "$WORK/bin/tmux"
+printf '%s' %new-state > "$WORK/.agent-notify/origin/-dev-ttys001"
+printf '%s' %old-state > "$WORK/.claude/origin/-dev-ttys001"
+printf '%s' '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":"hi"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_FORWARD=receiver \
+      AGENT_NOTIFY_SLACK=false TMUX=x TMUX_PANE=%42 \
+      "$NOTIFY" --event >/dev/null 2>&1
+assert_json_field "$WORK/forwarded" .origin %new-state \
+  "the agent-notify origin state takes precedence over legacy state"
+teardown
+
+# --- case 15: the old per-tty state directory remains a fallback -----------
+setup
+mkdir -p "$WORK/bin" "$WORK/.claude/origin"
+cat > "$WORK/bin/ssh" <<STUB
+#!/usr/bin/env bash
+cat > "$WORK/forwarded"
+STUB
+cat > "$WORK/bin/tmux" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  list-clients) printf '1|/dev/ttys001\n' ;;
+  display-message)
+    case "$*" in
+      *'#{session_name}'*) printf 'code\n' ;;
+      *'#{pane_active} #{window_active} #{session_attached}'*) printf '1 1 1\n' ;;
+      *) printf 'code:1.0\n' ;;
+    esac
+    ;;
+esac
+STUB
+chmod +x "$WORK/bin/ssh" "$WORK/bin/tmux"
+printf '%s' %legacy-state > "$WORK/.claude/origin/-dev-ttys001"
+printf '%s' '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":"hi"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_FORWARD=receiver \
+      AGENT_NOTIFY_SLACK=false TMUX=x TMUX_PANE=%42 \
+      "$NOTIFY" --event >/dev/null 2>&1
+assert_json_field "$WORK/forwarded" .origin %legacy-state \
+  "the Claude origin directory remains a compatibility fallback"
 teardown
 
 echo

@@ -224,23 +224,34 @@ claude_ai_title() {
 # is reached through, and so the one a notification from here should focus. Empty
 # when nobody is connected, which just means the banner gets no click action.
 #
-# LC_CLAUDE_PANE arrives through ssh's default `SendEnv LANG LC_*` / sshd's
-# matching AcceptEnv, so no sshd configuration is involved. Claude has it in its
-# own environment when it runs in the ssh session directly; inside a tmux over
-# here it does not, because the tmux session outlives any one ssh connection —
-# hence the file the login shell drops per tty, read through whichever client is
-# attached right now.
+# LC_AGENT_NOTIFY_PANE arrives through ssh's default `SendEnv LANG LC_*` /
+# sshd's matching AcceptEnv, so no sshd configuration is involved. The agent has
+# it in its own environment when it runs in the ssh session directly; inside a
+# tmux over here it does not, because the tmux session outlives any one ssh
+# connection — hence the file the login shell drops per tty, read through
+# whichever client is attached right now. LC_CLAUDE_PANE and ~/.claude/origin
+# remain read-only fallbacks for machines still migrating to the agent-neutral
+# names.
 origin_pane() {
-    local session tty origin
+    local session tty origin file legacy_file
 
     # Inside a tmux here, the attached client is the only current answer: the
-    # session outlives connections, so the LC_CLAUDE_PANE its panes inherited
-    # names whichever pane happened to start the server, possibly days ago.
+    # session outlives connections, so the LC_AGENT_NOTIFY_PANE its panes
+    # inherited names whichever pane happened to start the server, possibly days
+    # ago.
     if [[ -n "${TMUX_PANE:-}" ]]; then
         session=$(tmux display-message -t "$TMUX_PANE" -p '#{session_name}' 2>/dev/null)
         tty=$(tmux list-clients -t "$session" -F '#{client_activity}|#{client_tty}' 2>/dev/null |
             sort -rn | head -1 | cut -d'|' -f2)
-        [[ -n "$tty" ]] && origin=$(cat "$HOME/.claude/origin/${tty//\//-}" 2>/dev/null)
+        if [[ -n "$tty" ]]; then
+            file="$HOME/.agent-notify/origin/${tty//\//-}"
+            legacy_file="$HOME/.claude/origin/${tty//\//-}"
+            if [[ -f "$file" ]]; then
+                origin=$(cat "$file" 2>/dev/null)
+            else
+                origin=$(cat "$legacy_file" 2>/dev/null)
+            fi
+        fi
 
         # Empty is the honest answer when this client never registered one. The
         # inherited value would still be there to fall back on and would still
@@ -251,7 +262,7 @@ origin_pane() {
     fi
 
     # Straight into the ssh session with no tmux, and the environment is right.
-    echo "${LC_CLAUDE_PANE:-}"
+    echo "${LC_AGENT_NOTIFY_PANE:-${LC_CLAUDE_PANE:-}}"
 }
 
 # Get tmux info if available. Anchor to $TMUX_PANE — the pane THIS Claude process

@@ -183,34 +183,42 @@ line, and both AppleScript blocks take their input through `on run argv`.
 ### Clicking through, two hops
 
 A forwarded banner has to walk further than a local one: first to whatever holds
-the ssh session on the Mac, then to the pane running Claude on the far side.
+the ssh session on the Mac, then to the pane running the agent on the far side.
 `tmux-focus` takes both, and the local half comes in one of two shapes.
 
-**The ssh runs inside a tmux pane.** `.zshrc` exports `LC_CLAUDE_PANE=$TMUX_PANE`,
-which rides along on ssh's stock `SendEnv LANG LC_*` and is accepted by sshd's
-stock `AcceptEnv LANG LC_*` — nothing to configure. On arrival `.zshrc` records it
-per-tty, because the value a tmux *server* inherited names whichever pane started
-it, possibly days ago:
+**The ssh runs inside a tmux pane.** `.zshrc` exports
+`LC_AGENT_NOTIFY_PANE=$TMUX_PANE`, which rides along on ssh's stock
+`SendEnv LANG LC_*` and is accepted by sshd's stock `AcceptEnv LANG LC_*` —
+nothing to configure. On arrival `.zshrc` records it per-tty, because the value a
+tmux *server* inherited names whichever pane started it, possibly days ago:
 
 ```bash
 if [[ -n $SSH_TTY ]]; then
-  mkdir -p ~/.claude/origin
-  if [[ -n $LC_CLAUDE_PANE ]]; then
-    print -r -- $LC_CLAUDE_PANE > ~/.claude/origin/${SSH_TTY//\//-}
+  agent_notify_origin=${LC_AGENT_NOTIFY_PANE:-${LC_CLAUDE_PANE:-}}
+  mkdir -p ~/.agent-notify/origin ~/.claude/origin
+  if [[ -n $agent_notify_origin ]]; then
+    print -r -- "$agent_notify_origin" > ~/.agent-notify/origin/${SSH_TTY//\//-}
+    print -r -- "$agent_notify_origin" > ~/.claude/origin/${SSH_TTY//\//-}
   else
-    rm -f ~/.claude/origin/${SSH_TTY//\//-}   # ttys are reused
+    rm -f ~/.agent-notify/origin/${SSH_TTY//\//-} ~/.claude/origin/${SSH_TTY//\//-}
   fi
+  unset agent_notify_origin
 elif [[ -n $TMUX_PANE ]]; then
+  export LC_AGENT_NOTIFY_PANE=$TMUX_PANE
   export LC_CLAUDE_PANE=$TMUX_PANE
 fi
 ```
 
-That `else` branch matters: a login with no pane to declare has to *erase* the
-last one's answer, not merely decline to write. Ttys get reused, so `/dev/pts/0`
-keeps whatever an earlier connection left there, and a stale id is live and wrong.
-When the attached client never registered one, `agent-notify` reports no pane at
-all rather than that stale id — a click that lands confidently on an unrelated
-pane is worse than one that falls through to the tab match below.
+`LC_AGENT_NOTIFY_PANE` and `~/.agent-notify/origin` are canonical. The legacy
+variable and state file are mirrored during migration so older installations keep
+working; `agent-notify` prefers the new names but accepts either.
+
+The `else` branch matters: a login with no pane to declare has to *erase* the last
+one's answer, not merely decline to write. Ttys get reused, so `/dev/pts/0` keeps
+whatever an earlier connection left there, and a stale id is live and wrong. When
+the attached client never registered one, `agent-notify` reports no pane at all
+rather than that stale id — a click that lands confidently on an unrelated pane
+is worse than one that falls through to the tab match below.
 
 **The ssh runs in a plain terminal tab.** There is no pane to select, and wrapping
 it in a local tmux purely to invent one would nest a tmux inside a tmux. Instead
@@ -342,6 +350,7 @@ rm ~/.agent-notify-debug        # stop
 | `AGENT_NOTIFY_BIN` | (pi) Explicit path to the `agent-notify` backend, overriding autodiscovery |
 | `AGENT_NOTIFY_APP_NAME` | App-bundle name to post through (default `Claude Code` → `Claude Code Notify.app`; the pi extension sets `Pi` → `Pi Notify.app`) |
 | `AGENT_NOTIFY_EMOJI` | (pi) Slack header emoji for pi banners (default `:robot_face:`) |
+| `LC_AGENT_NOTIFY_PANE` | Origin tmux pane forwarded over SSH; `LC_CLAUDE_PANE` remains a compatibility alias |
 
 ## Requirements
 
