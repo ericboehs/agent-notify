@@ -1,13 +1,14 @@
 # agent-notify
 
-Desktop notifications for [Claude Code](https://claude.com/claude-code) that know
-which pane they came from — so clicking a banner lands you on the tmux pane that
-sent it, even when that pane is on another machine.
+Desktop notifications for coding agents — [Claude Code](https://claude.com/claude-code)
+and [pi](https://pi.dev) — that know which pane they came from, so clicking a
+banner lands you on the tmux pane that sent it, even when that pane is on
+another machine.
 
-Claude Code fires hooks at the moments worth knowing about: a turn ending, a
-question blocking, a permission prompt. `agent-notify` turns those payloads into
-macOS banners tagged with the tmux target of the sending pane. A machine with no
-GUI ships its banners over ssh to one that has — no daemon, no open port, no sshd
+Claude Code supplies hooks for turns ending, blocking questions, and permission
+prompts; pi supplies lifecycle events when work settles. `agent-notify` turns
+both into macOS banners tagged with the tmux target of the sending pane. A machine with no GUI ships its
+banners over ssh to one that has — no daemon, no open port, no sshd
 configuration on either end.
 
 ```
