@@ -1,7 +1,7 @@
 // pi-notify: desktop + Slack notifications for the pi coding agent.
 //
-// This is the pi-side producer for the claude-notify backend. It translates pi
-// lifecycle events into the canonical `claude-notify --event` envelope and lets
+// This is the pi-side producer for the agent-notify backend. It translates pi
+// lifecycle events into the canonical `agent-notify --event` envelope and lets
 // the proven shell/Swift backend own tmux targeting, visible-pane suppression,
 // SSH forwarding, Slack, macOS banners, and click-through to the origin pane.
 //
@@ -137,7 +137,7 @@ export function notifierEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...base,
-    CLAUDE_NOTIFY_APP_NAME: base.AGENT_NOTIFY_APP_NAME || "Pi",
+    AGENT_NOTIFY_APP_NAME: base.AGENT_NOTIFY_APP_NAME || "Pi",
   };
   if (base.AGENT_NOTIFY_EMOJI) env.AGENT_NOTIFY_EMOJI = base.AGENT_NOTIFY_EMOJI;
   // Leave the thumbnail alone unless the user pinned one. The backend fills in
@@ -146,7 +146,7 @@ export function notifierEnv(
   // suppresses both. `event` stays in the signature because which glyph applies
   // is still an event-shaped question, just one answered further down.
   if (base.AGENT_NOTIFY_IMAGE !== undefined) {
-    env.CLAUDE_NOTIFY_IMAGE = base.AGENT_NOTIFY_IMAGE;
+    env.AGENT_NOTIFY_IMAGE = base.AGENT_NOTIFY_IMAGE;
   }
   return env;
 }
@@ -167,7 +167,7 @@ export function selfPath(): string | undefined {
   }
 }
 
-// Resolve the claude-notify backend. Prefer an explicit override, then the copy
+// Resolve the agent-notify backend. Prefer an explicit override, then the copy
 // shipped alongside this extension (git checkout or installed pi package), then
 // the conventional ~/bin symlink.
 export function findNotifier(from?: string): string | undefined {
@@ -175,14 +175,14 @@ export function findNotifier(from?: string): string | undefined {
   if (override && existsSync(override)) return override;
 
   if (from) {
-    // <checkout>/extensions/pi-notify.ts -> <checkout>/bin/claude-notify.
+    // <checkout>/extensions/pi-notify.ts -> <checkout>/bin/agent-notify.
     // Installed by symlink this lands in ~/.pi/agent/bin, which will not exist,
     // and we fall through to the ~/bin symlink below.
-    const sibling = join(dirname(from), "..", "bin", "claude-notify");
+    const sibling = join(dirname(from), "..", "bin", "agent-notify");
     if (existsSync(sibling)) return sibling;
   }
 
-  const inBin = join(homedir(), "bin", "claude-notify");
+  const inBin = join(homedir(), "bin", "agent-notify");
   if (existsSync(inBin)) return inBin;
 
   return undefined;

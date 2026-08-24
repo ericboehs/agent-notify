@@ -1,39 +1,39 @@
 #!/bin/bash
-# claude-notify-app - (re)build the branded notifier app bundle used by claude-notify
+# agent-notify-app - (re)build the branded notifier app bundle used by agent-notify
 #
 # macOS takes a notification's icon and name from the bundle that posted it, so
 # the banners come from our own tiny app carrying the terminal's icon and its
-# own bundle id, rather than from a shared CLI. The app is lib/claude-notifier.swift,
+# own bundle id, rather than from a shared CLI. The app is lib/agent-notifier.swift,
 # compiled here; it also handles the click, which is why the bundle has to be a
 # real app in ~/Applications rather than a bare binary.
 #
 # Re-run this after editing the source or to switch terminals:
-#   CLAUDE_NOTIFY_TERMINAL=iTerm claude-notify-app
+#   AGENT_NOTIFY_TERMINAL=iTerm agent-notify-app
 #
 # The bundle's icon is the banner's icon. By default it is the terminal's, so a
 # notification looks like it came from the window it is about. A bundle that
 # speaks for an agent rather than for a terminal can say so instead:
-#   CLAUDE_NOTIFY_BUNDLE_ICON=pi claude-notify-app     # draw pi's mark
-#   CLAUDE_NOTIFY_BUNDLE_ICON=/path/to/Some.icns       # bring your own
+#   AGENT_NOTIFY_BUNDLE_ICON=pi agent-notify-app     # draw pi's mark
+#   AGENT_NOTIFY_BUNDLE_ICON=/path/to/Some.icns       # bring your own
 #
 # The first notification from a rebuilt bundle can trigger a macOS authorization
 # prompt ("Claude Code" Notifications) - allow it, or the banners stay silent.
 
 set -e
 
-CLAUDE_NOTIFY_TERMINAL="${CLAUDE_NOTIFY_TERMINAL:-Ghostty}"
-APP_NAME="${CLAUDE_NOTIFY_APP_NAME:-Claude Code}"
-BUNDLE_ID="${CLAUDE_NOTIFY_BUNDLE_ID:-com.ericboehs.claude-notify}"
+AGENT_NOTIFY_TERMINAL="${AGENT_NOTIFY_TERMINAL:-Ghostty}"
+APP_NAME="${AGENT_NOTIFY_APP_NAME:-Claude Code}"
+BUNDLE_ID="${AGENT_NOTIFY_BUNDLE_ID:-com.ericboehs.agent-notify}"
 DEST="$HOME/Applications/$APP_NAME Notify.app"
 
 REPO="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
-SRC="$REPO/lib/claude-notifier.swift"
+SRC="$REPO/lib/agent-notifier.swift"
 [[ -f "$SRC" ]] || { echo "notifier source not found at $SRC" >&2; exit 1; }
 command -v xcrun >/dev/null || { echo "xcrun not found - install the Xcode command line tools" >&2; exit 1; }
 
 # Where the icon comes from. ICNS empty means "generate it below", once there is
 # a bundle to generate it into.
-BUNDLE_ICON="${CLAUDE_NOTIFY_BUNDLE_ICON:-terminal}"
+BUNDLE_ICON="${AGENT_NOTIFY_BUNDLE_ICON:-terminal}"
 RENDER_LOGO="$REPO/lib/render-pi-logo.js"
 ICNS=""
 
@@ -45,9 +45,9 @@ case "$BUNDLE_ICON" in
         ;;
     terminal)
         # Pull the icon out of the terminal we want the notifications to look like.
-        TERM_APP="/Applications/$CLAUDE_NOTIFY_TERMINAL.app"
-        [[ -d "$TERM_APP" ]] || TERM_APP="$HOME/Applications/$CLAUDE_NOTIFY_TERMINAL.app"
-        [[ -d "$TERM_APP" ]] || { echo "$CLAUDE_NOTIFY_TERMINAL.app not found" >&2; exit 1; }
+        TERM_APP="/Applications/$AGENT_NOTIFY_TERMINAL.app"
+        [[ -d "$TERM_APP" ]] || TERM_APP="$HOME/Applications/$AGENT_NOTIFY_TERMINAL.app"
+        [[ -d "$TERM_APP" ]] || { echo "$AGENT_NOTIFY_TERMINAL.app not found" >&2; exit 1; }
         icon=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$TERM_APP/Contents/Info.plist" 2>/dev/null)
         icon="${icon%.icns}"
         ICNS="$TERM_APP/Contents/Resources/$icon.icns"
@@ -98,7 +98,7 @@ cat > "$DEST/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleExecutable</key><string>claude-notifier</string>
+  <key>CFBundleExecutable</key><string>agent-notifier</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>$APP_NAME</string>
   <key>CFBundleIconFile</key><string>$icon</string>
@@ -113,7 +113,7 @@ cat > "$DEST/Contents/Info.plist" <<PLIST
 PLIST
 
 xcrun --sdk macosx swiftc -swift-version 5 -O \
-    -o "$DEST/Contents/MacOS/claude-notifier" "$SRC" \
+    -o "$DEST/Contents/MacOS/agent-notifier" "$SRC" \
     -framework AppKit -framework UserNotifications
 
 # Thumbnail for the AskUserQuestion path, so a banner that needs an *answer*

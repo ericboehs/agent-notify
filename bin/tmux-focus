@@ -28,10 +28,10 @@ remote=${3:-}
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 # Same log the notifier writes to, and the same switch: create
-# ~/.claude-notify-debug to start, delete it to stop. A click either lands on
+# ~/.agent-notify-debug to start, delete it to stop. A click either lands on
 # the right pane or it does not, and the difference between "tmux moved and the
 # tab click failed" and "tmux never moved" is otherwise invisible after the fact.
-NOTIFY_DEBUG="$HOME/.claude-notify-debug"
+NOTIFY_DEBUG="$HOME/.agent-notify-debug"
 flog() { [ -e "$NOTIFY_DEBUG" ] && echo "$(date '+%H:%M:%S') tmux-focus $*" >> "$NOTIFY_DEBUG"; return 0; }
 flog "click target=$target app=$app remote=${remote:-none}"
 

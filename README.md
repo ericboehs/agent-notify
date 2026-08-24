@@ -1,11 +1,11 @@
-# claude-notify
+# agent-notify
 
 Desktop notifications for [Claude Code](https://claude.com/claude-code) that know
 which pane they came from — so clicking a banner lands you on the tmux pane that
 sent it, even when that pane is on another machine.
 
 Claude Code fires hooks at the moments worth knowing about: a turn ending, a
-question blocking, a permission prompt. `claude-notify` turns those payloads into
+question blocking, a permission prompt. `agent-notify` turns those payloads into
 macOS banners tagged with the tmux target of the sending pane. A machine with no
 GUI ships its banners over ssh to one that has — no daemon, no open port, no sshd
 configuration on either end.
@@ -13,8 +13,8 @@ configuration on either end.
 ```
 ┌─────────────────────┐        ┌──────────────────────────┐
 │ headless box        │  ssh   │ the Mac you sit at       │
-│ Stop hook           │ ─────► │ claude-notify --recv     │
-│ claude-notify       │        │ → banner → click         │
+│ Stop hook           │ ─────► │ agent-notify --recv      │
+│ agent-notify        │        │ → banner → click         │
 └─────────────────────┘        │ → tmux-focus (local tab) │
            ▲                   └──────────┬───────────────┘
            └──────────── ssh ─────────────┘
@@ -24,8 +24,8 @@ configuration on either end.
 ## Install
 
 ```bash
-git clone https://github.com/ericboehs/claude-notify ~/Code/claude-notify
-cd ~/Code/claude-notify && ./install.sh
+git clone https://github.com/ericboehs/agent-notify ~/Code/agent-notify
+cd ~/Code/agent-notify && ./install.sh
 ```
 
 That symlinks the three scripts into `~/bin`, builds the notifier app bundle, and
@@ -34,10 +34,10 @@ prints the hook configuration to add to `~/.claude/settings.json`:
 ```json
 {
   "hooks": {
-    "Stop":         [{ "hooks": [{ "type": "command", "command": "$HOME/bin/claude-notify" }] }],
-    "Notification": [{ "hooks": [{ "type": "command", "command": "$HOME/bin/claude-notify" }] }],
+    "Stop":         [{ "hooks": [{ "type": "command", "command": "$HOME/bin/agent-notify" }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "$HOME/bin/agent-notify" }] }],
     "PreToolUse":   [{ "matcher": "AskUserQuestion",
-                       "hooks": [{ "type": "command", "command": "$HOME/bin/claude-notify" }] }]
+                       "hooks": [{ "type": "command", "command": "$HOME/bin/agent-notify" }] }]
   }
 }
 ```
@@ -49,32 +49,32 @@ an ssh session came from. See [Clicking through, two hops](#clicking-through-two
 
 The same backend also drives notifications for [pi](https://pi.dev). Instead of a
 hook, pi loads an extension (`extensions/pi-notify.ts`) that turns pi lifecycle
-events into the canonical `claude-notify --event` envelope, so tmux targeting,
+events into the canonical `agent-notify --event` envelope, so tmux targeting,
 visible-pane suppression, forwarding, Slack, and click-through all work exactly as
 they do for Claude Code.
 
 Build the branded `Pi Notify.app` bundle alongside the Claude one:
 
 ```bash
-cd ~/Code/claude-notify && ./install.sh --pi
+cd ~/Code/agent-notify && ./install.sh --pi
 ```
 
 Then install the extension as a pi package (pins to the current commit):
 
 ```bash
-pi install git:github.com/ericboehs/claude-notify
+pi install git:github.com/ericboehs/agent-notify
 ```
 
 or load it from a checkout for development:
 
 ```bash
-pi -e ~/Code/claude-notify/extensions/pi-notify.ts
+pi -e ~/Code/agent-notify/extensions/pi-notify.ts
 ```
 
 or symlink it in, so every session picks it up and edits to the checkout are live:
 
 ```bash
-ln -s ~/Code/claude-notify/extensions/pi-notify.ts ~/.pi/agent/extensions/
+ln -s ~/Code/agent-notify/extensions/pi-notify.ts ~/.pi/agent/extensions/
 ```
 
 The extension is deliberately a single file so that last one works: pi resolves
@@ -82,7 +82,7 @@ an extension's relative imports against the symlink path, not its target, so a
 helper module next to it in the checkout would not be found.
 
 Installed by symlink the extension cannot see the checkout it came from, so it
-looks for the backend at `~/bin/claude-notify` (what `install.sh` creates). If it
+looks for the backend at `~/bin/agent-notify` (what `install.sh` creates). If it
 lives somewhere else, point `AGENT_NOTIFY_BIN` at it.
 
 The extension announces on `agent_settled` — pi's authoritative terminal
@@ -101,9 +101,9 @@ same pane.
 
 | | |
 |---|---|
-| `bin/claude-notify` | Reads the hook payload, decides whether to post, routes it locally or over ssh |
+| `bin/agent-notify` | Reads the hook payload, decides whether to post, routes it locally or over ssh |
 | `bin/tmux-focus` | Spends the address a banner carries: selects the pane, its window, its tab |
-| `bin/claude-notify-app` | Builds `~/Applications/Claude Code Notify.app`, the bundle that can receive a click |
+| `bin/agent-notify-app` | Builds `~/Applications/Claude Code Notify.app`, the bundle that can receive a click |
 
 ## What stays quiet
 
@@ -113,7 +113,7 @@ Three things post nothing at all.
 that pane's tmux window lives in, and the pane is the active one there, a banner
 would be describing the screen you are looking at. Every check has to agree before
 it stays quiet — a denied Accessibility grant, a sleeping display, or a pane on
-another machine all mean "cannot tell", which posts. `CLAUDE_NOTIFY_WHEN_VISIBLE=true`
+another machine all mean "cannot tell", which posts. `AGENT_NOTIFY_WHEN_VISIBLE=true`
 turns the suppression off.
 
 A forwarded notification splits the question in two, because neither machine can
@@ -125,7 +125,7 @@ session is the one in front. Only if both agree does the banner stay unsent.
 but the payload names no tool — just "Claude needs your permission" — and it lands
 moments after the `AskUserQuestion` banner that *does* say what is being asked.
 They share a group, so the vague one replaced the useful one. Off by default;
-`CLAUDE_NOTIFY_PERMISSION=true` brings it back.
+`AGENT_NOTIFY_PERMISSION=true` brings it back.
 
 **A session still waiting on its own agents.** A turn that ends while background
 agents are still running is the session waiting, not finishing — and each of those
@@ -140,32 +140,32 @@ Any other announcer that fires on `Stop` wants the same count, so it is availabl
 on its own:
 
 ```bash
-claude-notify --pending-tasks ~/.claude/projects/<project>/<session>.jsonl
+agent-notify --pending-tasks ~/.claude/projects/<project>/<session>.jsonl
 ```
 
 ## Forwarding from a headless machine
 
-A box with no GUI has nowhere to draw a banner. Set `CLAUDE_NOTIFY_FORWARD` on it
-and `claude-notify` ships the notification to a machine that does, over ssh:
+A box with no GUI has nowhere to draw a banner. Set `AGENT_NOTIFY_FORWARD` on it
+and `agent-notify` ships the notification to a machine that does, over ssh:
 
 ```bash
-CLAUDE_NOTIFY_HOST=coop CLAUDE_NOTIFY_SLACK=false \
-  CLAUDE_NOTIFY_FORWARD=e14,e14-wifi $HOME/bin/claude-notify
+AGENT_NOTIFY_HOST=coop AGENT_NOTIFY_SLACK=false \
+  AGENT_NOTIFY_FORWARD=e14,e14-wifi $HOME/bin/agent-notify
 ```
 
-`CLAUDE_NOTIFY_HOST` prefixes the label, so banners read `coop:code:1.0`. The
+`AGENT_NOTIFY_HOST` prefixes the label, so banners read `coop:code:1.0`. The
 forward list is tried in order until one connection succeeds — a wired address
 and a wireless one for the same laptop is the useful pairing.
 
 On the receiving Mac, restrict the key to exactly the one thing it may do:
 
 ```
-restrict,command="/Users/you/bin/claude-notify --recv" ssh-ed25519 AAAA… notify@coop
+restrict,command="/Users/you/bin/agent-notify --recv" ssh-ed25519 AAAA… notify@coop
 ```
 
 A forced command inherits no environment, which is why `--recv` re-exports a PATH
-and why both Slack knobs travel *in the payload*: set `CLAUDE_NOTIFY_SLACK` and
-`CLAUDE_NOTIFY_SLACK_AWAY_ONLY` on the machine Claude runs on, not on the Mac.
+and why both Slack knobs travel *in the payload*: set `AGENT_NOTIFY_SLACK` and
+`AGENT_NOTIFY_SLACK_AWAY_ONLY` on the machine Claude runs on, not on the Mac.
 Whether anyone is around to see a banner stays the receiver's question, since it
 is the only one that can measure it.
 
@@ -207,7 +207,7 @@ fi
 That `else` branch matters: a login with no pane to declare has to *erase* the
 last one's answer, not merely decline to write. Ttys get reused, so `/dev/pts/0`
 keeps whatever an earlier connection left there, and a stale id is live and wrong.
-When the attached client never registered one, `claude-notify` reports no pane at
+When the attached client never registered one, `agent-notify` reports no pane at
 all rather than that stale id — a click that lands confidently on an unrelated
 pane is worse than one that falls through to the tab match below.
 
@@ -229,8 +229,8 @@ nothing locally.
 
 macOS reads a notification's icon and name off the bundle that posted it and
 ignores `terminal-notifier -appIcon`, so out of the box every banner wears the
-generic Terminal icon. `claude-notify-app` (run by `install.sh`) builds a small
-app at `~/Applications/Claude Code Notify.app` from `lib/claude-notifier.swift`,
+generic Terminal icon. `agent-notify-app` (run by `install.sh`) builds a small
+app at `~/Applications/Claude Code Notify.app` from `lib/agent-notifier.swift`,
 carrying your terminal's icon and its own bundle id — banners then show the ghost,
 and the app gets its own row in System Settings › Notifications instead of hiding
 under "terminal-notifier".
@@ -239,15 +239,15 @@ Building one rather than dressing up `terminal-notifier` is what makes a click
 work at all. `terminal-notifier` posts through `NSUserNotification`, deprecated
 long ago and finally inert on macOS 26: the banner still appears, but the click
 never comes back, so `-execute` runs nothing and there is no way to reach the
-pane. `claude-notifier` posts through `UserNotifications` instead and answers
+pane. `agent-notifier` posts through `UserNotifications` instead and answers
 `didReceive` by running the command. The `terminal-notifier` CLI stays as a
 fallback, but all it can do is put a banner on screen.
 
 The first banner triggers a one-time macOS authorization prompt; allow it. Re-run
-`claude-notify-app` to point at a different terminal:
+`agent-notify-app` to point at a different terminal:
 
 ```bash
-CLAUDE_NOTIFY_TERMINAL=iTerm claude-notify-app
+AGENT_NOTIFY_TERMINAL=iTerm agent-notify-app
 ```
 
 ### Letting a click reach the tab
@@ -261,11 +261,11 @@ wrong tab.
 Worth knowing when that starts happening again for no apparent reason: the app is
 ad-hoc signed, macOS ties the grant to the signature, and every rebuild produces a
 new one. The stale grant is then unsatisfiable, and TCC answers no *without* asking
-again. So `claude-notify-app` ends by dropping both grants —
+again. So `agent-notify-app` ends by dropping both grants —
 
 ```bash
-tccutil reset Accessibility com.ericboehs.claude-notify
-tccutil reset AppleEvents   com.ericboehs.claude-notify
+tccutil reset Accessibility com.ericboehs.agent-notify
+tccutil reset AppleEvents   com.ericboehs.agent-notify
 ```
 
 — trading one fresh prompt for a permission that silently no longer works.
@@ -281,11 +281,11 @@ left icon says *which terminal*, the thumbnail says *what it wants*:
 
 So a banner that needs an *answer* is distinguishable from one that is merely
 finished without reading the text. Override per-call with
-`CLAUDE_NOTIFY_IMAGE=/path/to/icon` (`.icns` works as-is, and an explicit value
+`AGENT_NOTIFY_IMAGE=/path/to/icon` (`.icns` works as-is, and an explicit value
 beats the per-event defaults), or set it empty to drop the thumbnail.
 
 The question mark is rendered from the `questionmark.circle.fill` SF Symbol into
-the app bundle by `claude-notify-app`, via `lib/render-symbol.js` — JXA rather
+the app bundle by `agent-notify-app`, via `lib/render-symbol.js` — JXA rather
 than something needing installation, since the ObjC bridge ships on every Mac and
 PyObjC does not. Retint or restyle it there:
 
@@ -321,27 +321,26 @@ ssh, or macOS sitting on a notification it was handed promptly. Timestamping the
 stages settles which, and costs nothing when nobody is asking:
 
 ```bash
-touch ~/.claude-notify-debug     # on either machine, or both
-tail -f ~/.claude-notify-debug   # hook entry, forward, draw, suppression
-rm ~/.claude-notify-debug        # stop
+touch ~/.agent-notify-debug     # on either machine, or both
+tail -f ~/.agent-notify-debug   # hook entry, forward, draw, suppression
+rm ~/.agent-notify-debug        # stop
 ```
 
 ## Environment
 
 | Variable | Effect |
 |---|---|
-| `CLAUDE_NOTIFY_FORWARD` | Comma-separated hosts to ship banners to; tried in order until one connects |
-| `CLAUDE_NOTIFY_HOST` | Prefix the session label, so banners read `coop:code:1.0` |
-| `CLAUDE_NOTIFY_TERMINAL` | Which terminal a click should raise (default `Ghostty`) |
-| `CLAUDE_NOTIFY_WHEN_VISIBLE` | Post even for a pane you are already looking at |
-| `CLAUDE_NOTIFY_PERMISSION` | Bring the vague permission notifications back |
-| `CLAUDE_NOTIFY_IMAGE` | Override the banner thumbnail; empty drops it |
-| `CLAUDE_NOTIFY_SLACK` | Post to Slack as well as the desktop; travels in the forwarded payload |
-| `CLAUDE_NOTIFY_SLACK_AWAY_ONLY` | Slack only when away — display asleep or a VNC session — measured by the receiver (old name: `CLAUDE_NOTIFY_SLACK_SLEEP_ONLY`) |
-| `AGENT_NOTIFY_BIN` | (pi) Explicit path to the `claude-notify` backend, overriding autodiscovery |
-| `AGENT_NOTIFY_APP_NAME` | (pi) App-bundle name to post through (default `Pi` → `Pi Notify.app`) |
+| `AGENT_NOTIFY_FORWARD` | Comma-separated hosts to ship banners to; tried in order until one connects |
+| `AGENT_NOTIFY_HOST` | Prefix the session label, so banners read `coop:code:1.0` |
+| `AGENT_NOTIFY_TERMINAL` | Which terminal a click should raise (default `Ghostty`) |
+| `AGENT_NOTIFY_WHEN_VISIBLE` | Post even for a pane you are already looking at |
+| `AGENT_NOTIFY_PERMISSION` | Bring the vague permission notifications back |
+| `AGENT_NOTIFY_IMAGE` | Override the banner thumbnail; empty drops it |
+| `AGENT_NOTIFY_SLACK` | Post to Slack as well as the desktop; travels in the forwarded payload |
+| `AGENT_NOTIFY_SLACK_AWAY_ONLY` | Slack only when away — display asleep or a VNC session — measured by the receiver (old name: `AGENT_NOTIFY_SLACK_SLEEP_ONLY`) |
+| `AGENT_NOTIFY_BIN` | (pi) Explicit path to the `agent-notify` backend, overriding autodiscovery |
+| `AGENT_NOTIFY_APP_NAME` | App-bundle name to post through (default `Claude Code` → `Claude Code Notify.app`; the pi extension sets `Pi` → `Pi Notify.app`) |
 | `AGENT_NOTIFY_EMOJI` | (pi) Slack header emoji for pi banners (default `:robot_face:`) |
-| `AGENT_NOTIFY_IMAGE` | (pi) Override the pi banner thumbnail |
 
 ## Requirements
 

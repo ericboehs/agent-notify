@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# claude-notify installer
+# agent-notify installer
 
 set -e
 
@@ -19,12 +19,12 @@ for arg in "$@"; do
   esac
 done
 
-echo "Installing claude-notify..."
+echo "Installing agent-notify..."
 
 mkdir -p "$BIN_DIR"
 
-# Symlinked rather than copied, so claude-notify keeps finding tmux-focus and
-# claude-notify-app as siblings of its own resolved path, and an edit in the repo
+# Symlinked rather than copied, so agent-notify keeps finding tmux-focus and
+# agent-notify-app as siblings of its own resolved path, and an edit in the repo
 # is live immediately.
 echo "Symlinking to $BIN_DIR..."
 for script in "$SCRIPT_DIR/bin/"*; do
@@ -32,14 +32,14 @@ for script in "$SCRIPT_DIR/bin/"*; do
 done
 
 # The branded bundle is what makes a click answerable at all; without it
-# claude-notify falls back to the terminal-notifier CLI, which can only draw.
+# agent-notify falls back to the terminal-notifier CLI, which can only draw.
 if [ "$(uname)" = "Darwin" ]; then
   echo "Building notifier app bundle..."
-  "$SCRIPT_DIR/bin/claude-notify-app" || echo "  (skipped - see claude-notify-app output above)"
+  "$SCRIPT_DIR/bin/agent-notify-app" || echo "  (skipped - see agent-notify-app output above)"
   if [ -n "$WITH_PI" ]; then
     echo "Building Pi notifier app bundle..."
-    CLAUDE_NOTIFY_APP_NAME=Pi CLAUDE_NOTIFY_BUNDLE_ID=com.ericboehs.pi-notify \
-      "$SCRIPT_DIR/bin/claude-notify-app" || echo "  (skipped - see claude-notify-app output above)"
+    AGENT_NOTIFY_APP_NAME=Pi AGENT_NOTIFY_BUNDLE_ID=com.ericboehs.pi-notify \
+      "$SCRIPT_DIR/bin/agent-notify-app" || echo "  (skipped - see agent-notify-app output above)"
   fi
 fi
 
@@ -50,7 +50,7 @@ Pi integration:
 
   Install the extension as a pi package (pins to the current commit):
 
-    pi install git:github.com/ericboehs/claude-notify
+    pi install git:github.com/ericboehs/agent-notify
 
   Or load it from this checkout for development:
 
@@ -69,19 +69,19 @@ Installation complete.
 Add to the "hooks" section of ~/.claude/settings.json:
 
   "Stop": [
-    { "hooks": [{ "type": "command", "command": "$HOME/bin/claude-notify" }] }
+    { "hooks": [{ "type": "command", "command": "$HOME/bin/agent-notify" }] }
   ],
   "Notification": [
-    { "hooks": [{ "type": "command", "command": "$HOME/bin/claude-notify" }] }
+    { "hooks": [{ "type": "command", "command": "$HOME/bin/agent-notify" }] }
   ],
   "PreToolUse": [
     { "matcher": "AskUserQuestion",
-      "hooks": [{ "type": "command", "command": "$HOME/bin/claude-notify" }] }
+      "hooks": [{ "type": "command", "command": "$HOME/bin/agent-notify" }] }
   ]
 
 On a machine with no GUI, prefix that command with its forwarding config:
 
-  CLAUDE_NOTIFY_HOST=thisbox CLAUDE_NOTIFY_FORWARD=yourmac $HOME/bin/claude-notify
+  AGENT_NOTIFY_HOST=thisbox AGENT_NOTIFY_FORWARD=yourmac $HOME/bin/agent-notify
 
 Then:
   1. Ensure ~/bin is in your PATH

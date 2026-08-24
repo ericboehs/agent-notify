@@ -106,13 +106,13 @@ test("notifierEnv leaves the thumbnail to the backend for settled banners", () =
   // Setting it here at all - even to empty - would read as the caller pinning an
   // image, and suppress the pi mark the backend would otherwise supply.
   const env = notifierEnv("settled", {});
-  assert.equal(env.CLAUDE_NOTIFY_APP_NAME, "Pi");
-  assert.ok(!("CLAUDE_NOTIFY_IMAGE" in env));
+  assert.equal(env.AGENT_NOTIFY_APP_NAME, "Pi");
+  assert.ok(!("AGENT_NOTIFY_IMAGE" in env));
 });
 
 test("notifierEnv keeps the image unset for question banners", () => {
   const env = notifierEnv("question", {});
-  assert.equal(env.CLAUDE_NOTIFY_IMAGE, undefined);
+  assert.equal(env.AGENT_NOTIFY_IMAGE, undefined);
 });
 
 test("notifierEnv honours AGENT_NOTIFY_APP_NAME and AGENT_NOTIFY_IMAGE overrides", () => {
@@ -120,8 +120,8 @@ test("notifierEnv honours AGENT_NOTIFY_APP_NAME and AGENT_NOTIFY_IMAGE overrides
     AGENT_NOTIFY_APP_NAME: "MyAgent",
     AGENT_NOTIFY_IMAGE: "/tmp/icon.png",
   });
-  assert.equal(env.CLAUDE_NOTIFY_APP_NAME, "MyAgent");
-  assert.equal(env.CLAUDE_NOTIFY_IMAGE, "/tmp/icon.png");
+  assert.equal(env.AGENT_NOTIFY_APP_NAME, "MyAgent");
+  assert.equal(env.AGENT_NOTIFY_IMAGE, "/tmp/icon.png");
 });
 
 test("findNotifier resolves the backend shipped alongside the extension", () => {
@@ -129,7 +129,7 @@ test("findNotifier resolves the backend shipped alongside the extension", () => 
   delete process.env.AGENT_NOTIFY_BIN;
   try {
     const resolved = findNotifier(join(repoRoot, "extensions", "pi-notify.ts"));
-    assert.equal(resolved, join(repoRoot, "bin", "claude-notify"));
+    assert.equal(resolved, join(repoRoot, "bin", "agent-notify"));
   } finally {
     if (prev !== undefined) process.env.AGENT_NOTIFY_BIN = prev;
   }
@@ -138,7 +138,7 @@ test("findNotifier resolves the backend shipped alongside the extension", () => 
 test("findNotifier does not invent a sibling that is not there", () => {
   // What a symlink install looks like from inside the loader: it reports the
   // link path, and ../bin under it does not exist. The fallback may legitimately
-  // find ~/bin/claude-notify; what it must never do is answer from a directory
+  // find ~/bin/agent-notify; what it must never do is answer from a directory
   // it never confirmed.
   const prev = process.env.AGENT_NOTIFY_BIN;
   delete process.env.AGENT_NOTIFY_BIN;
@@ -151,7 +151,7 @@ test("findNotifier does not invent a sibling that is not there", () => {
 });
 
 test("findNotifier honours AGENT_NOTIFY_BIN when the path exists", () => {
-  const bin = join(repoRoot, "bin", "claude-notify");
+  const bin = join(repoRoot, "bin", "agent-notify");
   const prev = process.env.AGENT_NOTIFY_BIN;
   process.env.AGENT_NOTIFY_BIN = bin;
   try {

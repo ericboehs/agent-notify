@@ -1,4 +1,4 @@
-// claude-notifier - posts a Claude Code banner, and runs its action when clicked
+// agent-notifier - posts a Claude Code banner, and runs its action when clicked
 //
 // This replaces terminal-notifier, which posts through NSUserNotification. That
 // API is deprecated, and on macOS 26 the half of it that matters here is simply
@@ -7,10 +7,10 @@
 // that raised it. UNUserNotificationCenter is the supported path, and it hands
 // a click back to the posting app's delegate.
 //
-// Built into the branded app bundle by claude-notify-app. The flag names are
-// terminal-notifier's, so claude-notify's call sites did not have to change:
+// Built into the branded app bundle by agent-notify-app. The flag names are
+// terminal-notifier's, so agent-notify's call sites did not have to change:
 //
-//   claude-notifier -title T [-subtitle S] -message M [-group ID]
+//   agent-notifier -title T [-subtitle S] -message M [-group ID]
 //                   [-contentImage PATH] [-execute SHELL]
 //
 // With no arguments the process is being relaunched by a click, and its only
@@ -46,7 +46,7 @@ func attachment(from path: String) -> UNNotificationAttachment? {
           let rep = NSBitmapImageRep(data: tiff),
           let png = rep.representation(using: .png, properties: [:]) else { return nil }
     let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("claude-notify-\(UUID().uuidString)")
+        .appendingPathComponent("agent-notify-\(UUID().uuidString)")
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let dest = dir.appendingPathComponent("thumb.png")
     guard (try? png.write(to: dest)) != nil else { return nil }

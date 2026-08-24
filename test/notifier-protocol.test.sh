@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Protocol test for `claude-notify --event`, the canonical envelope the pi
+# Protocol test for `agent-notify --event`, the canonical envelope the pi
 # extension produces. It stubs the notifier binary with a recorder so the test
 # asserts exactly which arguments the backend would hand macOS, without drawing a
 # real banner or touching Slack.
@@ -9,7 +9,7 @@
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NOTIFY="$REPO/bin/claude-notify"
+NOTIFY="$REPO/bin/agent-notify"
 
 pass=0
 fail=0
@@ -25,13 +25,13 @@ setup() {
   # newline, because a banner body legitimately contains newlines and the
   # line-per-argument file cannot tell those apart from the next argument.
   CAPTURE_RS="$WORK/capture.rs"
-  cat > "$app/claude-notifier" <<STUB
+  cat > "$app/agent-notifier" <<STUB
 #!/usr/bin/env bash
 : > "$CAPTURE"
 : > "$CAPTURE_RS"
 for a in "\$@"; do printf '%s\n' "\$a" >> "$CAPTURE"; printf '%s\036' "\$a" >> "$CAPTURE_RS"; done
 STUB
-  chmod +x "$app/claude-notifier"
+  chmod +x "$app/agent-notifier"
 }
 
 teardown() { rm -rf "$WORK"; }
@@ -41,9 +41,9 @@ run_event() {
   local json="$1"
   printf '%s' "$json" | \
     env HOME="$WORK" \
-        CLAUDE_NOTIFY_FOREGROUND=1 \
-        CLAUDE_NOTIFY_APP_NAME="$APP_NAME" \
-        CLAUDE_NOTIFY_SLACK=false \
+        AGENT_NOTIFY_FOREGROUND=1 \
+        AGENT_NOTIFY_APP_NAME="$APP_NAME" \
+        AGENT_NOTIFY_SLACK=false \
         TMUX= TMUX_PANE= \
         "$NOTIFY" --event >/dev/null 2>&1
 }
@@ -125,10 +125,10 @@ teardown
 # --- case 4: host prefix ------------------------------------------------
 setup
 printf '%s' '{"version":1,"agent":"pi","event":"settled","session_name":"api","message":"hi"}' | \
-  env HOME="$WORK" CLAUDE_NOTIFY_FOREGROUND=1 CLAUDE_NOTIFY_APP_NAME="$APP_NAME" \
-      CLAUDE_NOTIFY_SLACK=false CLAUDE_NOTIFY_HOST=gfe TMUX= TMUX_PANE= \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_APP_NAME="$APP_NAME" \
+      AGENT_NOTIFY_SLACK=false AGENT_NOTIFY_HOST=gfe TMUX= TMUX_PANE= \
       "$NOTIFY" --event >/dev/null 2>&1
-assert_pair -title "gfe:api" "CLAUDE_NOTIFY_HOST prefixes the label"
+assert_pair -title "gfe:api" "AGENT_NOTIFY_HOST prefixes the label"
 teardown
 
 # --- case 5: the banner takes message, never the longer slack_body -------
@@ -154,10 +154,10 @@ mark="$WORK/Applications/$APP_NAME Notify.app/Contents/Resources/pi.png"
 mkdir -p "$(dirname "$mark")" && : > "$mark"
 pinned="$WORK/pinned.png"; : > "$pinned"
 printf '%s' '{"version":1,"agent":"pi","event":"settled","session_name":"s","message":"hi"}' | \
-  env HOME="$WORK" CLAUDE_NOTIFY_FOREGROUND=1 CLAUDE_NOTIFY_APP_NAME="$APP_NAME" \
-      CLAUDE_NOTIFY_SLACK=false CLAUDE_NOTIFY_IMAGE="$pinned" TMUX= TMUX_PANE= \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_APP_NAME="$APP_NAME" \
+      AGENT_NOTIFY_SLACK=false AGENT_NOTIFY_IMAGE="$pinned" TMUX= TMUX_PANE= \
       "$NOTIFY" --event >/dev/null 2>&1
-assert_pair -contentImage "$pinned" "an explicit CLAUDE_NOTIFY_IMAGE beats the mark"
+assert_pair -contentImage "$pinned" "an explicit AGENT_NOTIFY_IMAGE beats the mark"
 teardown
 
 # --- case 8: the scripts must parse under the bash the bundle actually gets ---
@@ -187,7 +187,7 @@ setup
 mark="$WORK/Applications/$APP_NAME Notify.app/Contents/Resources/pi.png"
 mkdir -p "$(dirname "$mark")" && : > "$mark"
 printf '%s' "{\"label\":\"coop:api\",\"agent\":\"pi\",\"app\":\"$APP_NAME\",\"header\":\":robot_face: coop:api\",\"message\":\"hi\",\"host\":\"coop\",\"target\":\"w:1.0\"}" | \
-  env HOME="$WORK" CLAUDE_NOTIFY_FOREGROUND=1 CLAUDE_NOTIFY_SLACK=false \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_SLACK=false \
       TMUX= TMUX_PANE= "$NOTIFY" --recv >/dev/null 2>&1
 assert_pair -contentImage "$mark" "a forwarded pi notification keeps pi's mark"
 assert_prefix -group "pi-" "a forwarded pi notification groups under pi"
@@ -198,8 +198,8 @@ teardown
 # Claude's, so silence has to keep meaning Claude.
 setup
 printf '%s' '{"label":"coop:api","message":"hi","host":"coop","target":"w:1.0"}' | \
-  env HOME="$WORK" CLAUDE_NOTIFY_FOREGROUND=1 CLAUDE_NOTIFY_SLACK=false \
-      CLAUDE_NOTIFY_APP_NAME="$APP_NAME" TMUX= TMUX_PANE= "$NOTIFY" --recv >/dev/null 2>&1
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_SLACK=false \
+      AGENT_NOTIFY_APP_NAME="$APP_NAME" TMUX= TMUX_PANE= "$NOTIFY" --recv >/dev/null 2>&1
 assert_prefix -group "claude-" "a payload with no agent still reads as Claude"
 teardown
 

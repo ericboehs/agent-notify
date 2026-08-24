@@ -1,22 +1,22 @@
 #!/bin/bash
-# claude-notify - Notification handler for Claude Code hooks
+# agent-notify - Notification handler for Claude Code hooks
 
 # Hooks inherit Claude's PATH, but --recv runs as an ssh forced command, which
 # gets a bare one — no ~/bin (slack-noti) and no Homebrew (jq, tmux).
 export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 # Enable/disable Slack notifications (defaults to true)
-# CLAUDE_NOTIFY_SLACK=false        - never send Slack notifications
-# CLAUDE_NOTIFY_SLACK_AWAY_ONLY=true - only send when away: display asleep, or
+# AGENT_NOTIFY_SLACK=false        - never send Slack notifications
+# AGENT_NOTIFY_SLACK_AWAY_ONLY=true - only send when away: display asleep, or
 #                                    someone driving this Mac over VNC
 #                                    (both travel with a forwarded notification,
 #                                     so set them on the machine Claude runs on)
-# CLAUDE_NOTIFY_HOST=gfe            - prefix the session label (e.g. "gfe:hd-recovery")
+# AGENT_NOTIFY_HOST=gfe            - prefix the session label (e.g. "gfe:hd-recovery")
 #                                    to distinguish this machine from others sharing the
 #                                    same #notifications channel. Unset = no prefix.
-# CLAUDE_NOTIFY_FORWARD=e14,e14-wifi - this machine has no GUI worth notifying (a box you
+# AGENT_NOTIFY_FORWARD=e14,e14-wifi - this machine has no GUI worth notifying (a box you
 #                                    only ever ssh into), so hand the notification to the
-#                                    machine you are sitting at and let its claude-notify
+#                                    machine you are sitting at and let its agent-notify
 #                                    --recv draw it. Comma-separated addresses for the
 #                                    same host are tried in order, since DHCP decides
 #                                    which one answers today.
@@ -25,27 +25,27 @@ export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 #                                    of a hook payload. Wired up as a forced command in
 #                                    ~/.ssh/authorized_keys so the sending box's key can do
 #                                    this and nothing else.
-CLAUDE_NOTIFY_SLACK="${CLAUDE_NOTIFY_SLACK:-true}"
+AGENT_NOTIFY_SLACK="${AGENT_NOTIFY_SLACK:-true}"
 # Slack is the away channel: a banner is for when you are here, Slack is for when
 # you are not. SLEEP_ONLY is the old name from when a dark display was the only
 # thing we knew how to measure; it still works.
-CLAUDE_NOTIFY_SLACK_AWAY_ONLY="${CLAUDE_NOTIFY_SLACK_AWAY_ONLY:-${CLAUDE_NOTIFY_SLACK_SLEEP_ONLY:-false}}"
-# CLAUDE_NOTIFY_PERMISSION=true - banner the Notification event too: a permission
+AGENT_NOTIFY_SLACK_AWAY_ONLY="${AGENT_NOTIFY_SLACK_AWAY_ONLY:-${AGENT_NOTIFY_SLACK_SLEEP_ONLY:-false}}"
+# AGENT_NOTIFY_PERMISSION=true - banner the Notification event too: a permission
 #                                 or approval prompt. Off by default. Running with
 #                                 auto-approval makes one rare, and the one that does
 #                                 fire is the generic "Claude needs your permission"
 #                                 that trails an AskUserQuestion - same group, so it
 #                                 replaces the banner naming the actual question with
 #                                 one saying less.
-CLAUDE_NOTIFY_PERMISSION="${CLAUDE_NOTIFY_PERMISSION:-false}"
-# CLAUDE_NOTIFY_WHEN_VISIBLE=true - banner a pane you are already watching. Off by
+AGENT_NOTIFY_PERMISSION="${AGENT_NOTIFY_PERMISSION:-false}"
+# AGENT_NOTIFY_WHEN_VISIBLE=true - banner a pane you are already watching. Off by
 #                                 default: if the terminal is frontmost, showing the
 #                                 tab this pane's tmux window lives in, and the pane
 #                                 is the active one there, the notification is telling
 #                                 you what is already on your screen.
-CLAUDE_NOTIFY_WHEN_VISIBLE="${CLAUDE_NOTIFY_WHEN_VISIBLE:-false}"
+AGENT_NOTIFY_WHEN_VISIBLE="${AGENT_NOTIFY_WHEN_VISIBLE:-false}"
 # Terminal app to raise when a desktop notification is clicked
-CLAUDE_NOTIFY_TERMINAL="${CLAUDE_NOTIFY_TERMINAL:-Ghostty}"
+AGENT_NOTIFY_TERMINAL="${AGENT_NOTIFY_TERMINAL:-Ghostty}"
 # Thumbnail drawn on the right of the banner. The banner icon says which terminal
 # (Ghostty), so this says which *kind* of prompt: Claude's glyph by default, a
 # question mark for AskUserQuestion, 1Password's when claude-1p-notify overrides
@@ -54,22 +54,22 @@ CLAUDE_NOTIFY_TERMINAL="${CLAUDE_NOTIFY_TERMINAL:-Ghostty}"
 # Whether the caller picked one has to be recorded before defaulting, so the
 # per-event overrides further down can tell "unset" from "deliberately chosen"
 # and leave claude-1p-notify's 1Password icon alone. The `-` (not `:-`) default
-# then means CLAUDE_NOTIFY_IMAGE= drops the thumbnail entirely, and a missing
+# then means AGENT_NOTIFY_IMAGE= drops the thumbnail entirely, and a missing
 # file is skipped at send time rather than erroring.
-CLAUDE_NOTIFY_IMAGE_SET="${CLAUDE_NOTIFY_IMAGE+1}"
-CLAUDE_NOTIFY_IMAGE="${CLAUDE_NOTIFY_IMAGE-/Applications/Claude.app/Contents/Resources/electron.icns}"
+AGENT_NOTIFY_IMAGE_SET="${AGENT_NOTIFY_IMAGE+1}"
+AGENT_NOTIFY_IMAGE="${AGENT_NOTIFY_IMAGE-/Applications/Claude.app/Contents/Resources/electron.icns}"
 
 # Resolve tmux-focus alongside this script; the notification click action runs
 # with a bare PATH, and this file is normally reached through a ~/bin symlink.
 TMUX_FOCUS=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/tmux-focus
 
 # macOS draws the banner's icon and name from the bundle that posted it, so
-# posting through our own app (built by claude-notify-app, carrying the
+# posting through our own app (built by agent-notify-app, carrying the
 # terminal's icon) is what turns the generic Terminal icon into Ghostty's. It is
 # also what receives the click, so the fallback below only ever gets a banner on
 # screen - clicking it does nothing until the app is built.
-NOTIFIER_APP="$HOME/Applications/${CLAUDE_NOTIFY_APP_NAME:-Claude Code} Notify.app"
-NOTIFIER="$NOTIFIER_APP/Contents/MacOS/claude-notifier"
+NOTIFIER_APP="$HOME/Applications/${AGENT_NOTIFY_APP_NAME:-Claude Code} Notify.app"
+NOTIFIER="$NOTIFIER_APP/Contents/MacOS/agent-notifier"
 [[ -x "$NOTIFIER" ]] || NOTIFIER="terminal-notifier"
 
 # Deduplication: skip if same message sent within this many seconds
@@ -144,10 +144,10 @@ json=$(cat)
 # several possible authors: the hook firing late, the wait for the reply text, the
 # ssh, or macOS sitting on a notification it was handed promptly. Timestamping the
 # stages settles which, and costs nothing when nobody is asking - create
-# ~/.claude-notify-debug on both machines to start, delete it to stop.
-NOTIFY_DEBUG="$HOME/.claude-notify-debug"
+# ~/.agent-notify-debug on both machines to start, delete it to stop.
+NOTIFY_DEBUG="$HOME/.agent-notify-debug"
 nlog() { [[ -e "$NOTIFY_DEBUG" ]] && echo "$(date '+%H:%M:%S') $$ $*" >> "$NOTIFY_DEBUG"; return 0; }
-nlog "enter recv=${recv:-0} detached=${CLAUDE_NOTIFY_FOREGROUND:-0} event=$(echo "$json" | jq -r '.hook_event_name // "-"' 2>/dev/null)"
+nlog "enter recv=${recv:-0} detached=${AGENT_NOTIFY_FOREGROUND:-0} event=$(echo "$json" | jq -r '.hook_event_name // "-"' 2>/dev/null)"
 
 # Hand the rest to a detached copy and let the turn end. Everything below costs
 # real time - up to two seconds waiting for the reply text to reach the transcript,
@@ -156,9 +156,9 @@ nlog "enter recv=${recv:-0} detached=${CLAUDE_NOTIFY_FOREGROUND:-0} event=$(echo
 # latency. It is a banner; it can arrive on its own. --recv is already running as
 # somebody else's background work, and the ssh that invoked it wants its exit
 # status, so that path stays in the foreground.
-if [[ -z "$recv" && -z "$CLAUDE_NOTIFY_FOREGROUND" ]]; then
+if [[ -z "$recv" && -z "$AGENT_NOTIFY_FOREGROUND" ]]; then
     printf '%s' "$json" |
-        CLAUDE_NOTIFY_FOREGROUND=1 nohup "$0" ${argv[@]+"${argv[@]}"} >/dev/null 2>&1 &
+        AGENT_NOTIFY_FOREGROUND=1 nohup "$0" ${argv[@]+"${argv[@]}"} >/dev/null 2>&1 &
     exit 0
 fi
 
@@ -294,8 +294,8 @@ label="${label:-$tmux_info}"
 # Optional per-machine prefix so notifications from different hosts are
 # distinguishable in a shared #notifications channel (e.g. "gfe:hd-recovery").
 # Baked into the label so the desktop message and dedup hash agree with it.
-if [[ -n "$CLAUDE_NOTIFY_HOST" ]]; then
-    label="${CLAUDE_NOTIFY_HOST}:${label}"
+if [[ -n "$AGENT_NOTIFY_HOST" ]]; then
+    label="${AGENT_NOTIFY_HOST}:${label}"
 fi
 
 # Every Slack post from this pane carries the same header, so its thread stays
@@ -331,27 +331,27 @@ forward_notification() {
         --arg label "$label" \
         --arg agent "$agent_name" \
         --arg header "$header" \
-        --arg app "${CLAUDE_NOTIFY_APP_NAME:-}" \
+        --arg app "${AGENT_NOTIFY_APP_NAME:-}" \
         --arg subtitle "$1" \
         --arg message "$2" \
         --arg slack_body "$3" \
         --arg origin "$(origin_pane)" \
-        --arg host "${CLAUDE_NOTIFY_HOST:-$(hostname -s)}" \
+        --arg host "${AGENT_NOTIFY_HOST:-$(hostname -s)}" \
         --arg target "$tmux_target" \
         --arg visible "$(pane_visible_in_tmux && echo 1 || echo 0)" \
-        --arg slack "$CLAUDE_NOTIFY_SLACK" \
-        --arg slack_away_only "$CLAUDE_NOTIFY_SLACK_AWAY_ONLY" \
+        --arg slack "$AGENT_NOTIFY_SLACK" \
+        --arg slack_away_only "$AGENT_NOTIFY_SLACK_AWAY_ONLY" \
         '{label: $label, subtitle: $subtitle, message: $message,
           agent: $agent, header: $header, app: $app,
           slack_body: $slack_body, origin: $origin, host: $host, target: $target,
           visible: $visible, slack: $slack, slack_away_only: $slack_away_only}')
 
-    nlog "forwarding to $CLAUDE_NOTIFY_FORWARD"
-    for host in ${CLAUDE_NOTIFY_FORWARD//,/ }; do
+    nlog "forwarding to $AGENT_NOTIFY_FORWARD"
+    for host in ${AGENT_NOTIFY_FORWARD//,/ }; do
         # The requested command is what runs if the key is unrestricted; the
         # authorized_keys forced command overrides it with the same thing.
         printf '%s' "$payload" |
-            ssh -o BatchMode=yes -o ConnectTimeout=4 "$host" 'bin/claude-notify --recv' \
+            ssh -o BatchMode=yes -o ConnectTimeout=4 "$host" 'bin/agent-notify --recv' \
                 >/dev/null 2>&1 && return 0
     done
     return 1
@@ -445,7 +445,7 @@ tab_tag() {
 looking_at_target() {
     local tag selected
 
-    [[ "$CLAUDE_NOTIFY_WHEN_VISIBLE" == "true" ]] && return 1
+    [[ "$AGENT_NOTIFY_WHEN_VISIBLE" == "true" ]] && return 1
     command -v osascript >/dev/null 2>&1 || return 1
 
     # Two hops, two questions. The far end answered its own before forwarding —
@@ -468,7 +468,7 @@ looking_at_target() {
     # Empty unless the terminal is frontmost, in which case the title of the tab
     # it is showing. AppleScript compares text without regard to case, which is
     # what we want: the process answers to "ghostty", the setting says "Ghostty".
-    selected=$(osascript - "$CLAUDE_NOTIFY_TERMINAL" 2>/dev/null <<'APPLESCRIPT'
+    selected=$(osascript - "$AGENT_NOTIFY_TERMINAL" 2>/dev/null <<'APPLESCRIPT'
 on run argv
   set appName to item 1 of argv
   tell application "System Events"
@@ -546,7 +546,7 @@ send_notification() {
 
     # Nothing local to draw on. Slack is posted by the far end (it holds the
     # webhook), but under *our* policy, which rides along in the payload.
-    if [[ -n "${CLAUDE_NOTIFY_FORWARD:-}" ]]; then
+    if [[ -n "${AGENT_NOTIFY_FORWARD:-}" ]]; then
         forward_notification "$subtitle" "$message" "$slack_body"
         return
     fi
@@ -560,7 +560,7 @@ send_notification() {
     # event name to give beyond a placeholder "Claude", and a plain stop passes
     # none at all. Drop both rather than spend the line saying nothing.
     [[ -n "$subtitle" && "$subtitle" != "Claude" ]] && notifier_args+=(-subtitle "$subtitle")
-    [[ -f "$CLAUDE_NOTIFY_IMAGE" ]] && notifier_args+=(-contentImage "$CLAUDE_NOTIFY_IMAGE")
+    [[ -f "$AGENT_NOTIFY_IMAGE" ]] && notifier_args+=(-contentImage "$AGENT_NOTIFY_IMAGE")
     # A group is what makes a session's second banner replace its first instead
     # of stacking, so every notification wants one, click target or not. The pane
     # is the natural identity when there is one; without it fall back to the
@@ -570,7 +570,7 @@ send_notification() {
     if [[ -n "$tmux_target" ]]; then
         notifier_args+=(
             -execute "$(printf '%q %q %q %q' "$TMUX_FOCUS" "$tmux_target" \
-                "$CLAUDE_NOTIFY_TERMINAL" "$remote_focus")"
+                "$AGENT_NOTIFY_TERMINAL" "$remote_focus")"
         )
     fi
 
@@ -591,11 +591,11 @@ send_notification() {
     fi
 
     # Send Slack notification if enabled (with deduplication)
-    # CLAUDE_NOTIFY_SLACK=false disables all Slack notifications
-    # CLAUDE_NOTIFY_SLACK_AWAY_ONLY=true sends only when away (asleep or VNC)
-    if [[ "$CLAUDE_NOTIFY_SLACK" == "true" ]]; then
+    # AGENT_NOTIFY_SLACK=false disables all Slack notifications
+    # AGENT_NOTIFY_SLACK_AWAY_ONLY=true sends only when away (asleep or VNC)
+    if [[ "$AGENT_NOTIFY_SLACK" == "true" ]]; then
         local should_send=true
-        if [[ "$CLAUDE_NOTIFY_SLACK_AWAY_ONLY" == "true" ]]; then
+        if [[ "$AGENT_NOTIFY_SLACK_AWAY_ONLY" == "true" ]]; then
             if ! user_is_away; then
                 should_send=false
                 nlog "slack skipped, not away"
@@ -637,7 +637,7 @@ if [[ -n "$event" ]]; then
         label="${cwd##*/}"
     fi
     label="${label:-$tmux_info}"
-    [[ -n "$CLAUDE_NOTIFY_HOST" ]] && label="${CLAUDE_NOTIFY_HOST}:${label}"
+    [[ -n "$AGENT_NOTIFY_HOST" ]] && label="${AGENT_NOTIFY_HOST}:${label}"
     header="${AGENT_NOTIFY_EMOJI:-:robot_face:} $label"
     # Key pi banners separately from Claude's so the two agents' notifications
     # replace within their own agent but never clobber each other on one pane.
@@ -652,20 +652,20 @@ if [[ -n "$event" ]]; then
     if [[ "$ev" == "question" || "$ev" == "attention" ]]; then
         [[ -z "$subtitle" ]] && subtitle="Waiting on your answer"
         question_icon="$NOTIFIER_APP/Contents/Resources/question.png"
-        [[ -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" && -f "$question_icon" ]] && CLAUDE_NOTIFY_IMAGE="$question_icon"
+        [[ -z "${AGENT_NOTIFY_IMAGE_SET:-}" && -f "$question_icon" ]] && AGENT_NOTIFY_IMAGE="$question_icon"
     else
         # Otherwise the agent's own mark, the way a Claude banner carries
         # Claude's: the app icon on the left stays the terminal's, because the
         # banner is still about that window. The default is Claude's app icon,
         # which would be a lie here.
         agent_icon="$NOTIFIER_APP/Contents/Resources/pi.png"
-        [[ -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" && -f "$agent_icon" ]] && CLAUDE_NOTIFY_IMAGE="$agent_icon"
+        [[ -z "${AGENT_NOTIFY_IMAGE_SET:-}" && -f "$agent_icon" ]] && AGENT_NOTIFY_IMAGE="$agent_icon"
     fi
     send_notification "$subtitle" "$body" "$header" "$slack_body"
     exit 0
 fi
 
-# --recv: a notification forwarded from another machine's claude-notify. Its
+# --recv: a notification forwarded from another machine's agent-notify. Its
 # label, event and body are settled; what is left is the click target, and that
 # is two panes deep — the local one holding the ssh session, then the pane on the
 # far side running Claude.
@@ -683,20 +683,20 @@ if [[ -n "$recv" ]]; then
     # than be inherited.
     recv_app=$(echo "$json" | jq -r '.app // empty')
     if [[ -n "$recv_app" ]]; then
-        CLAUDE_NOTIFY_APP_NAME="$recv_app"
+        AGENT_NOTIFY_APP_NAME="$recv_app"
         NOTIFIER_APP="$HOME/Applications/$recv_app Notify.app"
         # The binary path was settled at startup from this machine's own default,
         # before there was a payload to read, so it has to be re-derived here -
         # including the terminal-notifier fallback, in case the sender names a
         # bundle this machine has never built.
-        NOTIFIER="$NOTIFIER_APP/Contents/MacOS/claude-notifier"
+        NOTIFIER="$NOTIFIER_APP/Contents/MacOS/agent-notifier"
         [[ -x "$NOTIFIER" ]] || NOTIFIER="terminal-notifier"
     fi
     # The thumbnail is this machine's to resolve: the sender's path means nothing
     # here, but the mark lives in the bundle just chosen.
-    if [[ "$agent_name" == "pi" && -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" ]]; then
+    if [[ "$agent_name" == "pi" && -z "${AGENT_NOTIFY_IMAGE_SET:-}" ]]; then
         agent_icon="$NOTIFIER_APP/Contents/Resources/pi.png"
-        [[ -f "$agent_icon" ]] && CLAUDE_NOTIFY_IMAGE="$agent_icon"
+        [[ -f "$agent_icon" ]] && AGENT_NOTIFY_IMAGE="$agent_icon"
     fi
     tmux_target=$(echo "$json" | jq -r '.origin // empty')
     # No pane means the ssh was started from a plain terminal tab rather than
@@ -721,8 +721,8 @@ if [[ -n "$recv" ]]; then
     # Whether to post to Slack at all is the sender's call; whether anyone is
     # here to see a banner is still ours to measure, so only the policy travels.
     # slack_sleep_only is what an older sender calls the same field.
-    CLAUDE_NOTIFY_SLACK=$(echo "$json" | jq -r '.slack // "true"')
-    CLAUDE_NOTIFY_SLACK_AWAY_ONLY=$(echo "$json" |
+    AGENT_NOTIFY_SLACK=$(echo "$json" | jq -r '.slack // "true"')
+    AGENT_NOTIFY_SLACK_AWAY_ONLY=$(echo "$json" |
         jq -r '.slack_away_only // .slack_sleep_only // "false"')
     send_notification \
         "$(echo "$json" | jq -r '.subtitle // empty')" \
@@ -751,9 +751,9 @@ if [[ "$hook_tool" == "AskUserQuestion" ]]; then
     [[ -z "$desktop_body" ]] && desktop_body="Claude is asking for your input."
     # This one is blocked on an answer, not just finished — a question mark
     # separates it from a Stop banner without having to read the text. Only
-    # overrides the default, so an explicit CLAUDE_NOTIFY_IMAGE still wins.
+    # overrides the default, so an explicit AGENT_NOTIFY_IMAGE still wins.
     question_icon="$NOTIFIER_APP/Contents/Resources/question.png"
-    [[ -z "${CLAUDE_NOTIFY_IMAGE_SET:-}" && -f "$question_icon" ]] && CLAUDE_NOTIFY_IMAGE="$question_icon"
+    [[ -z "${AGENT_NOTIFY_IMAGE_SET:-}" && -f "$question_icon" ]] && AGENT_NOTIFY_IMAGE="$question_icon"
     send_notification "Waiting on your answer" "$desktop_body" "$header" "$body"
     exit 0
 fi
@@ -763,7 +763,7 @@ fi
 # but no .title — handle it before the title+message check so it doesn't fall
 # through to the generic Stop path.
 if [[ "$hook_event" == "Notification" ]]; then
-    [[ "$CLAUDE_NOTIFY_PERMISSION" == "true" ]] || exit 0
+    [[ "$AGENT_NOTIFY_PERMISSION" == "true" ]] || exit 0
     body=$(echo "$json" | jq -r '.message // "Claude needs your attention."')
     # Skip the idle "waiting for your input" nudge: it fires ~60s after the agent
     # stops (already covered by the Stop hook) and is just noise. Only surface
