@@ -7,9 +7,9 @@ another machine.
 
 Claude Code supplies hooks for turns ending, blocking questions, and permission
 prompts; pi supplies lifecycle events when work settles. `agent-notify` turns
-both into macOS banners tagged with the tmux target of the sending pane. A machine with no GUI ships its
-banners over ssh to one that has — no daemon, no open port, no sshd
-configuration on either end.
+both into macOS banners tagged with the tmux target of the sending pane. A
+machine with no GUI ships its banners over ssh to one that has — no daemon, no
+open port, no sshd configuration on either end.
 
 ```
 ┌─────────────────────┐        ┌──────────────────────────┐
