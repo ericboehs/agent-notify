@@ -8,6 +8,12 @@
 
 set -u
 
+# Every case passes the environment it cares about explicitly, so anything the
+# backend reads that is still set out here is a leak: run the suite inside a
+# tmux pane and LC_AGENT_NOTIFY_PANE=%42 silently wins the precedence cases.
+unset LC_AGENT_NOTIFY_PANE LC_CLAUDE_PANE TMUX TMUX_PANE TMUX_FOCUS
+unset "${!AGENT_NOTIFY_@}"
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NOTIFY="$REPO/bin/agent-notify"
 
