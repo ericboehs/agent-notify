@@ -13,7 +13,8 @@
   "license": "MIT",
   "author": "Eric Boehs",
   "scripts": {
-    "test": "node --test test/*.test.ts && bash test/notifier-protocol.test.sh"
+    "test": "node --test test/*.test.ts && bash test/notifier-protocol.test.sh",
+    "lint": "bash test/lint.sh"
   },
   "repository": {
     "type": "git",

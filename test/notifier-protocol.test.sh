@@ -75,14 +75,15 @@ assert_pair() {
 # it actually was.
 assert_pair_exact() {
   local flag="$1" value="$2" desc="$3"
-  local data oldifs i
+  local data i
   data=$(cat "$CAPTURE_RS" 2>/dev/null)
-  oldifs="$IFS"
-  set -f
-  IFS=$'\036'
-  local args=($data)
-  set +f
-  IFS="$oldifs"
+  # Split on the record separator the stub writes between arguments. IFS is a
+  # prefix to read, so it is scoped to this one command and there is no global
+  # to save, restore, or protect from globbing with set -f. -d '' reads past the
+  # newlines a banner body legitimately contains, and returns 1 at EOF for the
+  # same reason.
+  local args=()
+  IFS=$'\036' read -r -d '' -a args < <(printf '%s' "$data") || true
   for ((i = 0; i < ${#args[@]}; i++)); do
     if [[ "${args[$i]}" == "$flag" ]]; then
       if [[ "${args[$((i + 1))]}" == "$value" ]]; then

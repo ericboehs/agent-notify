@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The suite runs on macOS because that is what agent-notify targets: it shells
+  # out to osascript and md5, ships a Swift notifier, and one case asserts the
+  # bin/ scripts still parse under /bin/bash 3.2, which only means something on a
+  # runner that actually has 3.2.
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install mise
+        run: |
+          curl -fsSL https://mise.run | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+
+      - name: Install tools at the tracked pins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # mise resolves versions via the releases API
+        run: |
+          mise install
+          mise exec -- node --version
+
+      # node --test strips the TypeScript types natively, so there is nothing to
+      # install: the package has no dependencies, only a pi peer dependency the
+      # tests do not import.
+      - name: Run tests
+        run: mise exec -- npm test
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install mise
+        run: |
+          curl -fsSL https://mise.run | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+
+      # Ubuntu ships 0.9.0, which disagrees with the pinned version about what is
+      # clean, so take shellcheck from the same pin used locally rather than apt.
+      - name: Install shellcheck at the tracked pin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # mise resolves versions via the releases API
+        run: |
+          mise use -g "shellcheck@$(sed -n 's/^shellcheck = "\([^"]*\)"$/\1/p' mise.toml)"
+          shellcheck --version
+
+      - name: Run shellcheck
+        run: bash test/lint.sh
