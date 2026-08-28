@@ -371,14 +371,18 @@ forward_notification() {
 # Check for duplicate Slack messages
 is_duplicate_slack() {
     local msg="$1"
-    local msg_hash=$(echo -n "$label:$msg" | md5 -q)
-    local now=$(date +%s)
+    local msg_hash
+    msg_hash=$(echo -n "$label:$msg" | md5 -q)
+    local now
+    now=$(date +%s)
 
     mkdir -p "$(dirname "$DEDUPE_FILE")"
 
     if [[ -f "$DEDUPE_FILE" ]]; then
-        local last_hash=$(head -1 "$DEDUPE_FILE")
-        local last_time=$(tail -1 "$DEDUPE_FILE")
+        local last_hash
+        last_hash=$(head -1 "$DEDUPE_FILE")
+        local last_time
+        last_time=$(tail -1 "$DEDUPE_FILE")
 
         if [[ "$msg_hash" == "$last_hash" ]] && [[ $((now - last_time)) -lt $DEDUPE_WINDOW ]]; then
             return 0  # is duplicate
@@ -591,7 +595,8 @@ send_notification() {
         :
     # Only check if iTerm2 is frontmost when --sender com.googlecode.iterm2 is passed
     elif [[ "$sender" == "com.googlecode.iterm2" ]]; then
-        local frontmost_app=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')
+        local frontmost_app
+        frontmost_app=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')
         if [[ "$frontmost_app" != "iTerm2" ]]; then
             "$NOTIFIER" "${notifier_args[@]}"
         fi
