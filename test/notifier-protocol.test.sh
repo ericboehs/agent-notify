@@ -133,6 +133,89 @@ assert_json_field() {
   fi
 }
 
+# --- stubs for the Slack path ---------------------------------------------
+# The watched check reads three things the test machine would otherwise answer
+# for itself: which clients tmux has, where their ttys were logged in from, and
+# whether this display is awake. All three are on PATH, and the backend puts
+# $HOME/bin first, so a stub in the sandbox wins.
+
+# tmux with a single client: $1 its flags, $2 its tty.
+stub_tmux_client() {
+  mkdir -p "$WORK/bin"
+  cat > "$WORK/bin/tmux" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  list-clients)
+    case "\$*" in
+      *client_flags*) printf '%s|%s\n' '$1' '$2' ;;
+      *)              printf '1|%s\n' '$2' ;;
+    esac
+    ;;
+  display-message)
+    case "\$*" in
+      *'#{session_name}'*) printf 'code\n' ;;
+      *'#{pane_active} #{window_active} #{session_attached}'*) printf '1 1 1\n' ;;
+      *) printf 'code:1.0\n' ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x "$WORK/bin/tmux"
+}
+
+# who(1): $1 the tty, $2 the origin host in parentheses, or empty for a terminal
+# on this machine's own display.
+stub_who() {
+  mkdir -p "$WORK/bin"
+  cat > "$WORK/bin/who" <<STUB
+#!/usr/bin/env bash
+printf 'ericboehs        %s      Aug 29 18:20 %s\n' '${1##*/}' '${2:-}'
+STUB
+  chmod +x "$WORK/bin/who"
+}
+
+# Away or not: is_display_asleep asks CoreGraphics through python3 and takes its
+# exit status, and the VNC check reads pgrep and netstat.
+stub_display() {
+  local asleep="$1"
+  mkdir -p "$WORK/bin"
+  printf '#!/usr/bin/env bash\nexit %s\n' "$asleep" > "$WORK/bin/python3"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$WORK/bin/pgrep"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/bin/netstat"
+  chmod +x "$WORK/bin/python3" "$WORK/bin/pgrep" "$WORK/bin/netstat"
+}
+
+# slack-noti records the post instead of making it. The webhook variable is what
+# sends the backend down this branch rather than through tmux run-shell.
+stub_slack() {
+  mkdir -p "$WORK/bin"
+  cat > "$WORK/bin/slack-noti" <<STUB
+#!/usr/bin/env bash
+printf '%s' "\$1" > "$WORK/slack"
+STUB
+  chmod +x "$WORK/bin/slack-noti"
+}
+
+assert_slack() {
+  local want="$1" desc="$2" got=no
+  [[ -f "$WORK/slack" ]] && got=yes
+  if [[ "$got" == "$want" ]]; then
+    echo "PASS: $desc"; pass=$((pass + 1))
+  else
+    echo "FAIL: $desc (expected slack=$want, got slack=$got)"; fail=$((fail + 1))
+  fi
+}
+
+# One settled envelope from a pane in tmux, with the Slack path live. Extra
+# environment for the case goes in "$@".
+run_slack_event() {
+  printf '%s' '{"version":1,"agent":"pi","event":"settled","session_name":"s","message":"done"}' | \
+    env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_APP_NAME="$APP_NAME" \
+        AGENT_NOTIFY_SLACK=true BOEHS_SLACK_NOTI_HOOK=hook \
+        TMUX=x TMUX_PANE=%42 "$@" \
+        "$NOTIFY" --event >/dev/null 2>&1
+}
+
 # --- case 1: named session ------------------------------------------------
 setup
 run_event '{"version":1,"agent":"pi","event":"settled","session_name":"hd-recovery","cwd":"/x/proj","message":"All tests pass."}'
@@ -370,6 +453,122 @@ printf '%s' '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":"h
       "$NOTIFY" --event >/dev/null 2>&1
 assert_json_field "$WORK/forwarded" .origin %legacy-state \
   "the Claude origin directory remains a compatibility fallback"
+teardown
+
+# --- case 16: an iPad reading the pane keeps Slack quiet -------------------
+# Blink reports terminal focus (DEC 1004) and tmux carries it as the client's
+# `focused` flag, which is the only sign this machine gets that someone is
+# reading over ssh. The Mac's own display is dark, so the away rule would
+# otherwise post: the reply is already on a screen in the room.
+setup
+stub_tmux_client 'attached,focused,UTF-8' /dev/ttys014
+stub_who /dev/ttys014 '(10.0.1.124)'
+stub_display 0
+stub_slack
+run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=true
+assert_slack no "a focused ssh client showing the pane keeps Slack quiet"
+teardown
+
+# --- case 17: a dark display does not un-focus the terminal in front of it --
+# Nothing tells Ghostty the screen went to sleep, so its client stays `focused`
+# with the agent pane on top. Believing that would silence the away channel for
+# a laptop with the lid shut, which is the case it exists for.
+setup
+stub_tmux_client 'attached,focused,UTF-8' /dev/ttys000
+stub_who /dev/ttys000
+stub_display 0
+stub_slack
+run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=true
+assert_slack yes "a local terminal's focus flag is not believed once away"
+teardown
+
+# --- case 18: attached is not watching ------------------------------------
+# The client stays attached across an iOS background - the ssh socket survives -
+# so the flag has to be the signal, not the connection.
+setup
+stub_tmux_client 'attached,UTF-8' /dev/ttys014
+stub_who /dev/ttys014 '(10.0.1.124)'
+stub_display 0
+stub_slack
+run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=true
+assert_slack yes "an attached but unfocused client still gets the Slack post"
+teardown
+
+# --- case 19: the suppression can be turned off ---------------------------
+setup
+stub_tmux_client 'attached,focused,UTF-8' /dev/ttys014
+stub_who /dev/ttys014 '(10.0.1.124)'
+stub_display 0
+stub_slack
+run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=true AGENT_NOTIFY_SLACK_WHEN_WATCHED=true
+assert_slack yes "AGENT_NOTIFY_SLACK_WHEN_WATCHED posts anyway"
+teardown
+
+# --- case 20: at the desk, the local terminal counts ----------------------
+# With the display awake there is nothing stale about the focus flag, so a
+# Ghostty tab showing the pane is as much "already read" as the iPad is. Only
+# reachable with the away rule off, which is what asks for Slack regardless.
+setup
+stub_tmux_client 'attached,focused,UTF-8' /dev/ttys000
+stub_who /dev/ttys000
+stub_display 1
+stub_slack
+run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=false
+assert_slack no "a focused local client on a live display counts as watching"
+teardown
+
+# --- case 21: the answer travels with a forwarded notification ------------
+# Only the machine running the agent can see its own tmux, so the Mac has to be
+# told rather than measure.
+setup
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/ssh" <<STUB
+#!/usr/bin/env bash
+cat > "$WORK/forwarded"
+STUB
+chmod +x "$WORK/bin/ssh"
+stub_tmux_client 'attached,focused,UTF-8' /dev/ttys014
+stub_who /dev/ttys014 '(10.0.1.124)'
+stub_display 1
+printf '%s' '{"version":1,"agent":"pi","event":"settled","cwd":"/p","message":"hi"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_FORWARD=receiver \
+      AGENT_NOTIFY_SLACK=true AGENT_NOTIFY_SLACK_WHEN_WATCHED=false \
+      TMUX=x TMUX_PANE=%42 "$NOTIFY" --event >/dev/null 2>&1
+assert_json_field "$WORK/forwarded" .watched 1 \
+  "the sender reports that a focused client is reading the pane"
+assert_json_field "$WORK/forwarded" .slack_when_watched false \
+  "and the policy for it travels alongside the other Slack knobs"
+teardown
+
+# --- case 22: the receiver honours it -------------------------------------
+# --recv runs as a forced command with no environment, and the Mac is asleep, so
+# without the payload field it would post every one of these.
+setup
+stub_display 0
+stub_slack
+printf '%s' '{"label":"coop:api","agent":"pi","message":"hi","host":"coop","target":"%9","slack":"true","slack_away_only":"true","watched":"1"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_APP_NAME="$APP_NAME" \
+      BOEHS_SLACK_NOTI_HOOK=hook TMUX= TMUX_PANE= "$NOTIFY" --recv >/dev/null 2>&1
+assert_slack no "a forwarded notification the sender says is being read stays off Slack"
+teardown
+
+setup
+stub_display 0
+stub_slack
+printf '%s' '{"label":"coop:api","agent":"pi","message":"hi","host":"coop","target":"%9","slack":"true","slack_away_only":"true","watched":"0"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_APP_NAME="$APP_NAME" \
+      BOEHS_SLACK_NOTI_HOOK=hook TMUX= TMUX_PANE= "$NOTIFY" --recv >/dev/null 2>&1
+assert_slack yes "and one nobody is reading still reaches it"
+teardown
+
+# --- case 23: no tmux, no opinion -----------------------------------------
+# Every step of the check fails open: a notification from outside tmux, or from
+# a box where the commands are missing, is still worth a Slack post.
+setup
+stub_display 0
+stub_slack
+run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=true TMUX= TMUX_PANE=
+assert_slack yes "a pane the check cannot see anything about still posts"
 teardown
 
 echo

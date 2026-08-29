@@ -156,7 +156,7 @@ only; the script never sees a secret value.
 
 ## What stays quiet
 
-Three things post nothing at all.
+Four things post nothing at all.
 
 **A pane you are already watching.** If the terminal is frontmost, showing the tab
 that pane's tmux window lives in, and the pane is the active one there, a banner
@@ -169,6 +169,33 @@ A forwarded notification splits the question in two, because neither machine can
 answer both halves. The sending box says whether the pane was on top of its own
 tmux and puts that in the payload; the Mac says whether the tab holding that ssh
 session is the one in front. Only if both agree does the banner stay unsent.
+
+**A pane somebody is reading over ssh — for Slack.** Slack is the away channel,
+and away has one more shape than a dark display: on the couch with the iPad,
+reading the same tmux through Blink. Terminals report keyboard focus with DEC
+private mode 1004, and Blink sends focus-out as iOS backgrounds it and focus-in
+on return; with `focus-events on`, tmux carries that as the client's `focused`
+flag. So at notify time — polled, not hooked, which is stateless and race-free —
+the Slack post is dropped when a client attached to the pane's session says it
+has focus *and* the pane is the active one of the active window. Both halves
+matter: in testing, Blink was focused while the session sat on window 3 and the
+agent was working in window 6, and focus alone would have swallowed a ping
+nobody could see.
+
+The connection is not the signal. An iOS background leaves the ssh socket and
+the tmux client attached the whole time; only the focus flag moves.
+
+A *local* terminal's flag is only believed while this machine is not away.
+Nothing tells Ghostty that the display went dark, so it stays `focused` for as
+long as it was the frontmost window — a laptop left with an agent pane on top
+and the lid shut would otherwise never Slack again, which is the one case the
+away channel exists for. `who` names the host an ssh login came from and leaves
+local ttys bare, which is the cheap way to tell a screen in the room from the one
+that went to sleep. Everything else fails open: no tmux, no pane, a `who` that
+says nothing, and the post goes out. `AGENT_NOTIFY_SLACK_WHEN_WATCHED=true`
+turns the suppression off, and like the other Slack knobs it travels in a
+forwarded payload — only the machine running the agent can see its own tmux, so
+it answers the question and the Mac takes its word.
 
 **Permission prompts.** Claude Code fires its `Notification` event for approvals,
 but the payload names no tool — just "Claude needs your permission" — and it lands
@@ -213,10 +240,12 @@ restrict,command="/Users/you/bin/agent-notify --recv" ssh-ed25519 AAAA… notify
 ```
 
 A forced command inherits no environment, which is why `--recv` re-exports a PATH
-and why both Slack knobs travel *in the payload*: set `AGENT_NOTIFY_SLACK` and
-`AGENT_NOTIFY_SLACK_AWAY_ONLY` on the machine Claude runs on, not on the Mac.
-Whether anyone is around to see a banner stays the receiver's question, since it
-is the only one that can measure it.
+and why the Slack knobs travel *in the payload*: set `AGENT_NOTIFY_SLACK`,
+`AGENT_NOTIFY_SLACK_AWAY_ONLY` and `AGENT_NOTIFY_SLACK_WHEN_WATCHED` on the
+machine Claude runs on, not on the Mac. Whether anyone is around to see a banner
+stays the receiver's question, since it is the only one that can measure it —
+except for who is reading the sender's own tmux, which only the sender can see,
+so that answer rides along as `watched`.
 
 `restrict` is carrying weight here, not decoration: it refuses a pty, port
 forwarding, agent forwarding and the rest, and `command=` replaces whatever the
@@ -395,6 +424,7 @@ rm ~/.agent-notify-debug        # stop
 | `AGENT_NOTIFY_IMAGE` | Override the banner thumbnail; empty drops it |
 | `AGENT_NOTIFY_SLACK` | Post to Slack as well as the desktop; travels in the forwarded payload |
 | `AGENT_NOTIFY_SLACK_AWAY_ONLY` | Slack only when away — display asleep or a VNC session — measured by the receiver (old name: `AGENT_NOTIFY_SLACK_SLEEP_ONLY`) |
+| `AGENT_NOTIFY_SLACK_WHEN_WATCHED` | Slack even when a tmux client with terminal focus is showing the pane (an iPad on Blink counts); travels in the forwarded payload |
 | `AGENT_NOTIFY_BIN` | (pi) Explicit path to the `agent-notify` backend, overriding autodiscovery |
 | `AGENT_1P_NOTIFY_BIN` | (pi) Explicit path to `agent-1p-notify`, overriding autodiscovery |
 | `AGENT_NOTIFY_1P_LOG` | Where 1Password requests are logged (default `~/.agent-notify/1p-requests.log`) |
@@ -407,7 +437,7 @@ rm ~/.agent-notify-debug        # stop
 
 - macOS on the machine that draws banners (the sending box can be anything with bash)
 - Claude Code
-- tmux, for click-through to a pane
+- tmux, for click-through to a pane (and `focus-events on`, for the watched check)
 - `jq`
 - Xcode command line tools (`xcrun swiftc`), to build the notifier app
 - `terminal-notifier`, as a fallback when the app bundle is missing
