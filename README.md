@@ -29,7 +29,7 @@ git clone https://github.com/ericboehs/agent-notify ~/Code/agent-notify
 cd ~/Code/agent-notify && ./install.sh
 ```
 
-That symlinks the three scripts into `~/bin`, builds the notifier app bundle, and
+That symlinks the scripts into `~/bin`, builds the notifier app bundle, and
 prints the hook configuration to add to `~/.claude/settings.json`:
 
 ```json
@@ -76,7 +76,11 @@ or symlink it in, so every session picks it up and edits to the checkout are liv
 
 ```bash
 ln -s ~/Code/agent-notify/extensions/pi-notify.ts ~/.pi/agent/extensions/
+ln -s ~/Code/agent-notify/extensions/pi-1p-notify.ts ~/.pi/agent/extensions/
 ```
+
+The second extension is the 1Password labeller — pi's stand-in for the hook
+Claude Code uses. See [Naming the 1Password prompt](#naming-the-1password-prompt).
 
 The extension is deliberately a single file so that last one works: pi resolves
 an extension's relative imports against the symlink path, not its target, so a
@@ -98,11 +102,44 @@ and Claude notifications carry distinct icons and never replace each other on th
 same pane.
 
 
-## The three pieces
+## Naming the 1Password prompt
+
+1Password's authorization dialog is system-modal and says only that `op` wants in
+— not which agent asked, or what it wants. With several agent panes running there
+is nothing to approve on sight. `bin/agent-1p-notify` fires a banner naming both
+just *before* the command runs, so it lands next to the Touch ID prompt, and
+clicking it focuses the pane that asked.
+
+Claude Code calls it as a `PreToolUse(Bash)` hook:
+
+```json
+"PreToolUse": [
+  { "matcher": "Bash",
+    "hooks": [{ "type": "command", "command": "$HOME/bin/agent-1p-notify",
+                "timeout": 5, "async": true }] }
+]
+```
+
+pi has no hooks, so `extensions/pi-1p-notify.ts` is the equivalent: it watches
+`tool_call` for the bash tool, which fires before the command runs, and hands the
+command to the same script. Both agents therefore agree on what counts as an `op`
+invocation — `op` in command position anywhere in the pipeline, minus the few
+subcommands (`--version`, `completion`, …) that unlock nothing.
+
+The banner names what is being asked for, whether that is an item title or a
+secret reference, and summarises past three (`Personal/EG4/api-key + P/a/b +1
+more`). Desktop only: a Touch ID prompt can only be answered at the machine, so a
+Slack copy would be noise — and item names do not belong in a channel. They do go
+to `~/.agent-notify/1p-requests.log` (agent, pane, item), which answers "what did
+that prompt an hour ago want?" after the fact. Titles only; the script never sees
+a secret value.
+
+## The pieces
 
 | | |
 |---|---|
 | `bin/agent-notify` | Reads the hook payload, decides whether to post, routes it locally or over ssh |
+| `bin/agent-1p-notify` | Turns an `op` invocation into a banner naming the agent and the item it wants |
 | `bin/tmux-focus` | Spends the address a banner carries: selects the pane, its window, its tab |
 | `bin/agent-notify-app` | Builds `~/Applications/Claude Code Notify.app`, the bundle that can receive a click |
 
@@ -348,6 +385,9 @@ rm ~/.agent-notify-debug        # stop
 | `AGENT_NOTIFY_SLACK` | Post to Slack as well as the desktop; travels in the forwarded payload |
 | `AGENT_NOTIFY_SLACK_AWAY_ONLY` | Slack only when away — display asleep or a VNC session — measured by the receiver (old name: `AGENT_NOTIFY_SLACK_SLEEP_ONLY`) |
 | `AGENT_NOTIFY_BIN` | (pi) Explicit path to the `agent-notify` backend, overriding autodiscovery |
+| `AGENT_1P_NOTIFY_BIN` | (pi) Explicit path to `agent-1p-notify`, overriding autodiscovery |
+| `AGENT_NOTIFY_1P_LOG` | Where 1Password requests are logged (default `~/.agent-notify/1p-requests.log`) |
+| `AGENT_NOTIFY_1P_IMAGE` | Thumbnail for a 1Password banner; empty drops it |
 | `AGENT_NOTIFY_APP_NAME` | App-bundle name to post through (default `Claude Code` → `Claude Code Notify.app`; the pi extension sets `Pi` → `Pi Notify.app`) |
 | `AGENT_NOTIFY_EMOJI` | (pi) Slack header emoji for pi banners (default `:robot_face:`) |
 | `LC_AGENT_NOTIFY_PANE` | Origin tmux pane forwarded over SSH; `LC_CLAUDE_PANE` remains a compatibility alias |

@@ -48,12 +48,12 @@ AGENT_NOTIFY_WHEN_VISIBLE="${AGENT_NOTIFY_WHEN_VISIBLE:-false}"
 AGENT_NOTIFY_TERMINAL="${AGENT_NOTIFY_TERMINAL:-Ghostty}"
 # Thumbnail drawn on the right of the banner. The banner icon says which terminal
 # (Ghostty), so this says which *kind* of prompt: Claude's glyph by default, a
-# question mark for AskUserQuestion, 1Password's when claude-1p-notify overrides
+# question mark for AskUserQuestion, 1Password's when agent-1p-notify overrides
 # it. .icns is accepted as-is.
 #
 # Whether the caller picked one has to be recorded before defaulting, so the
 # per-event overrides further down can tell "unset" from "deliberately chosen"
-# and leave claude-1p-notify's 1Password icon alone. The `-` (not `:-`) default
+# and leave agent-1p-notify's 1Password icon alone. The `-` (not `:-`) default
 # then means AGENT_NOTIFY_IMAGE= drops the thumbnail entirely, and a missing
 # file is skipped at send time rather than erroring.
 AGENT_NOTIFY_IMAGE_SET="${AGENT_NOTIFY_IMAGE+1}"
@@ -186,7 +186,7 @@ claude_session_file() {
         [[ -n "$file" ]] && { echo "$file"; return; }
     fi
 
-    # Wrappers (claude-manager-hook.sh, claude-1p-notify) synthesise their own
+    # Wrappers (claude-manager-hook.sh, agent-1p-notify) synthesise their own
     # {title,message} payload and drop session_id, so walk up the process tree
     # instead: the hook is always a descendant of the claude process the file is
     # named for.

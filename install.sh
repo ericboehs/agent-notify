@@ -55,10 +55,13 @@ Pi integration:
   Or load it from this checkout for development:
 
     pi -e $SCRIPT_DIR/extensions/pi-notify.ts
+    pi -e $SCRIPT_DIR/extensions/pi-1p-notify.ts
 
   The extension announces on agent_settled, suppresses while pi-background-tasks
   or pi-subagents report active work, and posts through "Pi Notify.app". No hook
-  config is needed for pi.
+  config is needed for pi. pi-1p-notify.ts is the second half: pi has no hooks,
+  so it watches tool_call for the bash tool and labels 1Password's unlock dialog
+  the way the PreToolUse(Bash) hook does for Claude Code.
 EOF
 fi
 
@@ -76,8 +79,13 @@ Add to the "hooks" section of ~/.claude/settings.json:
   ],
   "PreToolUse": [
     { "matcher": "AskUserQuestion",
-      "hooks": [{ "type": "command", "command": "$HOME/bin/agent-notify" }] }
+      "hooks": [{ "type": "command", "command": "$HOME/bin/agent-notify" }] },
+    { "matcher": "Bash",
+      "hooks": [{ "type": "command", "command": "$HOME/bin/agent-1p-notify" }] }
   ]
+
+The Bash matcher is optional: it labels 1Password's unlock dialog with the pane
+that asked and the item it wants, and posts nothing for any other command.
 
 On a machine with no GUI, prefix that command with its forwarding config:
 

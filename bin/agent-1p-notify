@@ -1,0 +1,117 @@
+#!/bin/bash
+# agent-1p-notify - label 1Password's unlock dialog with the agent that asked.
+#
+# 1Password's authorization dialog is system-modal and says only that "op" wants
+# in — not which agent asked or which item it wants. With several agent panes
+# running there is nothing to approve on sight. This fires a banner naming both
+# just before the command runs, so the banner and the Touch ID prompt appear
+# together; clicking the banner focuses the pane that asked (via agent-notify).
+#
+# Two producers, one parser. Claude Code calls this directly as a
+# PreToolUse(Bash) hook and hands over its own payload; pi has no hooks, so the
+# pi-1p-notify extension synthesises the smaller envelope below. Both shapes are
+# read from stdin:
+#
+#   Claude:  { "tool_name": "Bash", "tool_input": { "command": "..." },
+#              "cwd": "..." }
+#   pi:      { "agent": "pi", "command": "...", "session_name": "...",
+#              "cwd": "..." }
+#
+# Desktop only: a Touch ID prompt can only be answered at the machine, so a
+# Slack copy would be noise — and item names don't belong in a channel.
+
+# Hooks inherit the agent's PATH, which on a headless or sandboxed launch may not
+# have Homebrew on it; jq and tmux both live there.
+export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+json=$(cat)
+
+# Which agent is asking. Claude only when its Bash tool is the caller; the pi
+# extension filters on tool name before it ever spawns this.
+agent=$(echo "$json" | jq -r '.agent // "claude"')
+if [[ "$agent" == "claude" ]]; then
+    [[ "$(echo "$json" | jq -r '.tool_name // empty')" == "Bash" ]] || exit 0
+fi
+
+# A command legitimately spans lines, so it is read on its own rather than
+# packed into a record with the single-line fields.
+command=$(echo "$json" | jq -r '.tool_input.command // .command // empty')
+[[ -n "$command" ]] || exit 0
+
+# `op` in *command position* — start of the string or after a separator — so the
+# whole pipeline is covered (the credentials skill chains
+# `op signin --account my && op item get ... && op read ...`) without matching the
+# bare word "op" inside an argument or a message. Any subcommand counts: `vault
+# list` and `account list` hit the vault and raise the same dialog. The few that
+# answer locally, without unlocking anything, are excluded.
+op_at='(^|[;&|(`])[[:space:]]*op[[:space:]]'
+echo "$command" | grep -qE "$op_at" || exit 0
+echo "$command" | grep -qE "${op_at}+(--version|-v|--help|-h|completion|update)([[:space:]]|$)" && exit 0
+
+# Name what is being asked for. Quoted item titles ("EG4 Portal") and bare secret
+# references (op://Personal/Bar/api-key) both survive; `op signin` alone yields
+# nothing, in which case fall back to a slice of the command itself.
+# A macOS banner gets two lines, and the pane prefix eats part of the first, so
+# keep labels tight: drop the op:// scheme and summarise past three items rather
+# than letting the useful names get truncated away.
+items=$(echo "$command" |
+  grep -oE "op (item get|document get|read) ('[^']*'|\"[^\"]*\"|[^ ]+)" |
+  sed -E "s/^op (item get|document get|read) //; s/^['\"]//; s/['\"\`;)]+$//; s|^op://||" |
+  awk '!seen[$0]++' |
+  awk 'NR <= 3 { printf "%s%s", sep, $0; sep = " + " }
+       END { if (NR > 3) printf " +%d more", NR - 3 }')
+
+# Subcommands with no item to name (`op vault list`, `op signin`) fall back to the
+# invocation itself — just that segment, without the surrounding pipeline, the
+# redirections, or whatever else shares the command line.
+if [[ -z "$items" ]]; then
+  items=$(echo "$command" | grep -oE "${op_at}[^;&|)]*" | head -1 |
+    sed -E 's/^[;&|(`]?[[:space:]]*//; s/[[:space:]]*[0-9]*[<>].*$//; s/[[:space:]]+$//' |
+    cut -c1-60)
+fi
+label="${items:-op}"
+
+# Audit trail: which agent, in which pane, asked for which item, and when.
+# Banners are transient and easy to miss; this answers "what did that prompt an
+# hour ago want?" after the fact. Item titles only — never a secret value, which
+# this never sees.
+pane="-"
+[[ -n "${TMUX_PANE:-}" ]] &&
+  pane=$(tmux display-message -t "$TMUX_PANE" -p '#S:#{window_index}.#{pane_index}' 2>/dev/null || echo "-")
+log="${AGENT_NOTIFY_1P_LOG:-$HOME/.agent-notify/1p-requests.log}"
+mkdir -p "$(dirname "$log")"
+printf '%s  %-6s  %-12s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$agent" "$pane" "$label" >> "$log"
+
+# The backend, normally a sibling of this script (both are symlinked into ~/bin
+# from the same checkout). AGENT_NOTIFY_BIN overrides, which is also how the
+# tests point it at a recorder.
+notify="${AGENT_NOTIFY_BIN:-}"
+if [[ -z "$notify" ]]; then
+    self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
+    notify="$(dirname "$self")/agent-notify"
+fi
+[[ -x "$notify" ]] || exit 0
+
+# 1Password's own icon on the banner, so the thumbnail says which prompt is
+# waiting without reading a word of it. Explicitly set, which also stops
+# agent-notify substituting the question glyph for an "attention" event.
+export AGENT_NOTIFY_SLACK=false
+export AGENT_NOTIFY_IMAGE="${AGENT_NOTIFY_1P_IMAGE-/Applications/1Password.app/Contents/Resources/icon.icns}"
+
+if [[ "$agent" == "claude" ]]; then
+    # Claude's path is unchanged: a {title,message} payload, whose session label
+    # agent-notify resolves by walking up the process tree to the claude process.
+    jq -nc --arg m "1Password: $label" \
+      '{title:"1Password unlock requested",message:$m}' | "$notify"
+else
+    # Everyone else names their own session, because only Claude leaves a session
+    # file behind to find. "attention" rather than "settled": the agent is blocked
+    # on a dialog, not finished.
+    jq -nc --arg a "$agent" --arg m "1Password: $label" \
+        --arg name "$(echo "$json" | jq -r '.session_name // empty')" \
+        --arg id "$(echo "$json" | jq -r '.session_id // empty')" \
+        --arg cwd "$(echo "$json" | jq -r '.cwd // empty')" \
+      '{version:1, agent:$a, event:"attention", session_id:$id, session_name:$name,
+        cwd:$cwd, subtitle:"1Password unlock requested", message:$m, slack_body:""}' |
+      "$notify" --event
+fi

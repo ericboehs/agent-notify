@@ -13,7 +13,7 @@
   "license": "MIT",
   "author": "Eric Boehs",
   "scripts": {
-    "test": "node --test test/*.test.ts && bash test/notifier-protocol.test.sh",
+    "test": "node --test test/*.test.ts && bash test/notifier-protocol.test.sh && bash test/onepassword.test.sh",
     "lint": "bash test/lint.sh"
   },
   "repository": {
@@ -25,7 +25,8 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/pi-notify.ts"
+      "./extensions/pi-notify.ts",
+      "./extensions/pi-1p-notify.ts"
     ]
   }
 }
