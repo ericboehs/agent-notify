@@ -126,15 +126,16 @@ teardown
 echo "which window is asking"
 setup
 run_1p_in_pane '{"agent":"pi","command":"op read op://P/a/b","session_name":"solar","cwd":"/tmp/proj"}' "code:6.0"
-assert_field '.session_name' "solar · code:6.0" "names the session and the pane it runs in"
+assert_field '.session_name' "solar" "leaves the session name to the producer"
+assert_field '.label_suffix' "code:6.0" "and passes the pane for agent-notify to append"
 teardown
 setup
-run_1p_in_pane '{"agent":"pi","command":"op read op://P/a/b","cwd":"/tmp/proj"}' "code:6.0"
-assert_field '.session_name' "proj · code:6.0" "falls back to the project directory, still with the pane"
+run_1p_in_pane '{"tool_name":"Bash","tool_input":{"command":"op read op://P/a/b"},"cwd":"/tmp"}' "code:6.0"
+assert_field '.label_suffix' "code:6.0" "Claude gets the pane too, on the payload it already sends"
 teardown
 setup
 run_1p '{"agent":"pi","command":"op read op://P/a/b","session_name":"solar","cwd":"/tmp/proj"}'
-assert_field '.session_name' "solar" "outside tmux there is no pane to add"
+assert_field '.label_suffix' "" "outside tmux there is no pane to name"
 teardown
 
 echo "what it names"

@@ -130,8 +130,10 @@ The banner names what is being asked for, whether that is an item title or a
 secret reference, and summarises past three (`Personal/EG4/api-key + P/a/b +1
 more`). Its title says *who* is asking — the session name and the tmux pane, e.g.
 `solar · code:6.0` — because that is the question the modal cannot answer: with
-four agents running, "op wants in" names none of them. Clicking still lands on
-that pane.
+four agents running, "op wants in" names none of them. Both agents get this: the
+pane travels as a `label_suffix` on the payload, which `agent-notify` appends to
+whatever it ends up calling the session, and drops when the label is already
+those coordinates. Clicking still lands on that pane.
 
 Slack gets a copy only while you are away (display asleep, or someone driving the
 Mac over VNC). The dialog also takes a typed password, so over VNC it really is

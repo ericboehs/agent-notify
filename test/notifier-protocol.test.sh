@@ -54,6 +54,19 @@ run_event() {
         "$NOTIFY" --event >/dev/null 2>&1
 }
 
+# As run_event, but through the Claude hook path: no --event, and the payload is
+# the {title,message} shape a wrapper like agent-1p-notify sends.
+run_hook() {
+  local json="$1"
+  printf '%s' "$json" | \
+    env HOME="$WORK" \
+        AGENT_NOTIFY_FOREGROUND=1 \
+        AGENT_NOTIFY_APP_NAME="$APP_NAME" \
+        AGENT_NOTIFY_SLACK=false \
+        TMUX= TMUX_PANE= \
+        "$NOTIFY" >/dev/null 2>&1
+}
+
 # Assert the recorded argv contains a "--flag value" pair.
 assert_pair() {
   local flag="$1" value="$2" desc="$3"
@@ -147,6 +160,37 @@ printf '%s' '{"version":1,"agent":"pi","event":"settled","session_name":"api","m
       AGENT_NOTIFY_SLACK=false AGENT_NOTIFY_HOST=gfe TMUX= TMUX_PANE= \
       "$NOTIFY" --event >/dev/null 2>&1
 assert_pair -title "gfe:api" "AGENT_NOTIFY_HOST prefixes the label"
+teardown
+
+# --- case 4b: label_suffix ------------------------------------------------
+# A caller that knows something the label does not (agent-1p-notify knows the
+# pane) can qualify it, and the qualifier has to survive the host prefix rather
+# than displace it.
+setup
+run_event '{"version":1,"agent":"pi","event":"attention","session_name":"solar","cwd":"/x/proj","message":"1Password: Fastmail","label_suffix":"code:6.0"}'
+assert_pair -title "solar · code:6.0" "label_suffix names the pane behind the session"
+teardown
+setup
+run_event '{"version":1,"agent":"pi","event":"attention","cwd":"/x/proj","message":"1Password: Fastmail","label_suffix":"code:6.0"}'
+assert_pair -title "proj · code:6.0" "and qualifies the cwd fallback too"
+teardown
+setup
+run_event '{"version":1,"agent":"pi","event":"attention","session_name":"code:6.0","message":"1Password: Fastmail","label_suffix":"code:6.0"}'
+assert_pair -title "code:6.0" "but never says the same thing twice"
+teardown
+setup
+printf '%s' '{"version":1,"agent":"pi","event":"attention","session_name":"solar","message":"hi","label_suffix":"code:6.0"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_APP_NAME="$APP_NAME" \
+      AGENT_NOTIFY_SLACK=false AGENT_NOTIFY_HOST=gfe TMUX= TMUX_PANE= \
+      "$NOTIFY" --event >/dev/null 2>&1
+assert_pair -title "gfe:solar · code:6.0" "the host still prefixes the whole thing"
+teardown
+setup
+# The Claude hook path resolves its own label, so the suffix is the only way a
+# wrapper can add the pane there.
+run_hook '{"title":"1Password unlock requested","message":"1Password: Fastmail","label_suffix":"code:6.0"}'
+assert_pair -title "Session · code:6.0" "a titled hook payload takes the suffix too"
+assert_pair -subtitle "1Password unlock requested" "and keeps its title as the subtitle"
 teardown
 
 # --- case 5: the banner takes message, never the longer slack_body -------

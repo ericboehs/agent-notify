@@ -169,10 +169,11 @@ fi
 # whitespace into a single delimiter: a payload with no tool_name would hand every
 # later field the value of the one before it. These five are identifiers and
 # paths; the free text stays in its own calls below.
-IFS=$'\037' read -r hook_session_id hook_tool hook_event hook_transcript hook_titled <<<"$(
+IFS=$'\037' read -r hook_session_id hook_tool hook_event hook_transcript hook_titled label_suffix <<<"$(
     echo "$json" | jq -r '[.session_id // "", .tool_name // "", .hook_event_name // "",
                            .transcript_path // "",
-                           (if .title and .message then "1" else "" end)] | join("\u001f")' 2>/dev/null)"
+                           (if .title and .message then "1" else "" end),
+                           .label_suffix // ""] | join("\u001f")' 2>/dev/null)"
 
 # Locate this hook's entry in ~/.claude/sessions/, where Claude keeps one file
 # per live session holding its name, sessionId and pid. Empty if not found.
@@ -290,6 +291,14 @@ fi
 # clicked. A %id names the same pane for as long as it lives.
 tmux_target="$tmux_pane_id"
 
+# Append a caller-supplied qualifier to a label, unless it is already in there.
+# Used by both label paths (hook and --event), so the rule lives in one place.
+append_label_suffix() {
+    local base="$1" suffix="$2"
+    [[ -z "$suffix" || "$base" == "$suffix" || "$base" == *"$suffix" ]] && { printf '%s' "$base"; return; }
+    printf '%s' "${base:+$base · }$suffix"
+}
+
 # What the notification calls this session, best name first: the one you gave it
 # ("hd-recovery"), else the title Claude inferred, else the tmux coordinates —
 # which only mean something once the layout is memorised. Clicking through lands
@@ -301,6 +310,13 @@ if [[ -n "$session_file" ]]; then
     [[ -z "$label" ]] && label=$(claude_ai_title "$(jq -r '.sessionId // empty' "$session_file" 2>/dev/null)")
 fi
 label="${label:-$tmux_info}"
+
+# A caller that knows something the label does not can say so: agent-1p-notify
+# passes the tmux coordinates, because a system-modal 1Password dialog has to
+# name the pane it belongs to and several sessions in one project share a name.
+# Skipped when the label already *is* that answer, which is exactly what happens
+# when it fell back to $tmux_info: "code:6.0 · code:6.0" says nothing twice.
+label=$(append_label_suffix "$label" "$label_suffix")
 
 # Optional per-machine prefix so notifications from different hosts are
 # distinguishable in a shared #notifications channel (e.g. "gfe:hd-recovery").
@@ -653,6 +669,7 @@ if [[ -n "$event" ]]; then
         label="${cwd##*/}"
     fi
     label="${label:-$tmux_info}"
+    label=$(append_label_suffix "$label" "$label_suffix")
     [[ -n "$AGENT_NOTIFY_HOST" ]] && label="${AGENT_NOTIFY_HOST}:${label}"
     header="${AGENT_NOTIFY_EMOJI:-:robot_face:} $label"
     # Key pi banners separately from Claude's so the two agents' notifications

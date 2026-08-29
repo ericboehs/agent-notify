@@ -105,32 +105,32 @@ export AGENT_NOTIFY_IMAGE="${AGENT_NOTIFY_1P_IMAGE-/Applications/1Password.app/C
 export AGENT_NOTIFY_SLACK="${AGENT_NOTIFY_SLACK:-true}"
 export AGENT_NOTIFY_SLACK_AWAY_ONLY="${AGENT_NOTIFY_SLACK_AWAY_ONLY:-true}"
 
+# Which *window* is asking is the question a system-modal dialog cannot answer:
+# with several agents running, "op wants in" names none of them, and two sessions
+# in the same project share a name. agent-notify appends this to whatever it ends
+# up calling the session — for Claude a name only it can look up, for pi the name
+# in the envelope — and drops it when the label is already these coordinates.
+# Clicking the banner still lands on the pane; this is for deciding whether to
+# approve before you get that far.
+pane_label=""
+[[ "$pane" != "-" ]] && pane_label="$pane"
+
 if [[ "$agent" == "claude" ]]; then
-    # Claude's path is unchanged: a {title,message} payload, whose session label
-    # agent-notify resolves by walking up the process tree to the claude process.
-    jq -nc --arg m "1Password: $label" \
-      '{title:"1Password unlock requested",message:$m}' | "$notify"
+    # Claude's path stays a {title,message} payload, because agent-notify can find
+    # its session file by walking up the process tree and name the session better
+    # than this script could. The pane it could not know is passed alongside.
+    jq -nc --arg m "1Password: $label" --arg suffix "$pane_label" \
+      '{title:"1Password unlock requested", message:$m, label_suffix:$suffix}' | "$notify"
 else
     # Everyone else names their own session, because only Claude leaves a session
-    # file behind to find. Which *window* asked is the question a modal dialog
-    # cannot answer — with several agents running, "op wants in" names none of
-    # them — so the tmux coordinates ride along with the session name rather than
-    # being the fallback agent-notify uses when there is no name at all. Clicking
-    # the banner still lands on the pane; this is for deciding whether to approve
-    # before you get that far.
-    where=$(echo "$json" | jq -r '.session_name // empty')
-    if [[ -z "$where" ]]; then
-        cwd=$(echo "$json" | jq -r '.cwd // empty')
-        where="${cwd##*/}"
-    fi
-    [[ "$pane" != "-" ]] && where="${where:+$where · }$pane"
-
-    # "attention" rather than "settled": the agent is blocked on a dialog, not
-    # finished.
-    jq -nc --arg a "$agent" --arg m "1Password: $label" --arg name "$where" \
+    # file behind to find. "attention" rather than "settled": the agent is blocked
+    # on a dialog, not finished.
+    jq -nc --arg a "$agent" --arg m "1Password: $label" --arg suffix "$pane_label" \
+        --arg name "$(echo "$json" | jq -r '.session_name // empty')" \
         --arg id "$(echo "$json" | jq -r '.session_id // empty')" \
         --arg cwd "$(echo "$json" | jq -r '.cwd // empty')" \
       '{version:1, agent:$a, event:"attention", session_id:$id, session_name:$name,
-        cwd:$cwd, subtitle:"1Password unlock requested", message:$m, slack_body:""}' |
+        cwd:$cwd, subtitle:"1Password unlock requested", message:$m, slack_body:"",
+        label_suffix:$suffix}' |
       "$notify" --event
 fi
