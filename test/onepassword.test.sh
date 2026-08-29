@@ -31,7 +31,8 @@ setup() {
 #!/usr/bin/env bash
 cat > "$PAYLOAD"
 printf '%s\n' "\$@" > "$ARGS"
-printf 'slack=%s\nimage=%s\napp=%s\n' "\${AGENT_NOTIFY_SLACK-unset}" \
+printf 'slack=%s\naway=%s\nimage=%s\napp=%s\n' "\${AGENT_NOTIFY_SLACK-unset}" \
+  "\${AGENT_NOTIFY_SLACK_AWAY_ONLY-unset}" \
   "\${AGENT_NOTIFY_IMAGE-unset}" "\${AGENT_NOTIFY_APP_NAME-unset}" > "$ENVFILE"
 STUBEOF
   chmod +x "$STUB"
@@ -40,9 +41,28 @@ STUBEOF
 teardown() { rm -rf "$WORK"; }
 
 # Run one payload through the script with the recorder in place of the backend.
+# TMUX_PANE is set per-case: the label the script composes depends on whether it
+# can name a pane, and a suite that inherited the real one would assert against
+# whichever pane happened to run it.
 run_1p() {
   printf '%s' "$1" | env AGENT_NOTIFY_BIN="$STUB" AGENT_NOTIFY_1P_LOG="$LOG" \
     HOME="$WORK" TMUX= TMUX_PANE= "$SCRIPT" >/dev/null 2>&1
+}
+
+# As above, but with a stub tmux answering for a pane, so the label can be
+# asserted without the suite depending on where it runs. It goes in $HOME/bin,
+# because the script puts that first on PATH itself — a stub anywhere else loses
+# to the real tmux, and the case passes or fails by which pane ran it.
+run_1p_in_pane() {
+  local pane="$2"
+  mkdir -p "$WORK/bin"
+  cat > "$WORK/bin/tmux" <<TMUXEOF
+#!/usr/bin/env bash
+printf '%s\n' "$pane"
+TMUXEOF
+  chmod +x "$WORK/bin/tmux"
+  printf '%s' "$1" | env AGENT_NOTIFY_BIN="$STUB" AGENT_NOTIFY_1P_LOG="$LOG" \
+    HOME="$WORK" TMUX_PANE="%9" "$SCRIPT" >/dev/null 2>&1
 }
 
 ok() { pass=$((pass + 1)); echo "  ✅ $1"; }
@@ -91,9 +111,30 @@ teardown
 echo "environment handed to the backend"
 setup
 run_1p '{"agent":"pi","command":"op read op://Personal/EG4/api-key","cwd":"/tmp"}'
-assert_eq "$(grep '^slack=' "$ENVFILE")" "slack=false" "keeps item names out of Slack"
+assert_eq "$(grep '^slack=' "$ENVFILE")" "slack=true" "lets Slack have it"
+assert_eq "$(grep '^away=' "$ENVFILE")" "away=true" "but only while away: asleep, or someone on VNC"
 assert_eq "$(grep '^image=' "$ENVFILE")" \
   "image=/Applications/1Password.app/Contents/Resources/icon.icns" "pins 1Password's icon"
+teardown
+setup
+printf '%s' '{"agent":"pi","command":"op read op://P/a/b","cwd":"/tmp"}' |
+  env AGENT_NOTIFY_BIN="$STUB" AGENT_NOTIFY_1P_LOG="$LOG" HOME="$WORK" \
+      TMUX= TMUX_PANE= AGENT_NOTIFY_SLACK=false "$SCRIPT" >/dev/null 2>&1
+assert_eq "$(grep '^slack=' "$ENVFILE")" "slack=false" "and yields to an explicit AGENT_NOTIFY_SLACK"
+teardown
+
+echo "which window is asking"
+setup
+run_1p_in_pane '{"agent":"pi","command":"op read op://P/a/b","session_name":"solar","cwd":"/tmp/proj"}' "code:6.0"
+assert_field '.session_name' "solar · code:6.0" "names the session and the pane it runs in"
+teardown
+setup
+run_1p_in_pane '{"agent":"pi","command":"op read op://P/a/b","cwd":"/tmp/proj"}' "code:6.0"
+assert_field '.session_name' "proj · code:6.0" "falls back to the project directory, still with the pane"
+teardown
+setup
+run_1p '{"agent":"pi","command":"op read op://P/a/b","session_name":"solar","cwd":"/tmp/proj"}'
+assert_field '.session_name' "solar" "outside tmux there is no pane to add"
 teardown
 
 echo "what it names"

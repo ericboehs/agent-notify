@@ -128,11 +128,20 @@ subcommands (`--version`, `completion`, …) that unlock nothing.
 
 The banner names what is being asked for, whether that is an item title or a
 secret reference, and summarises past three (`Personal/EG4/api-key + P/a/b +1
-more`). Desktop only: a Touch ID prompt can only be answered at the machine, so a
-Slack copy would be noise — and item names do not belong in a channel. They do go
-to `~/.agent-notify/1p-requests.log` (agent, pane, item), which answers "what did
-that prompt an hour ago want?" after the fact. Titles only; the script never sees
-a secret value.
+more`). Its title says *who* is asking — the session name and the tmux pane, e.g.
+`solar · code:6.0` — because that is the question the modal cannot answer: with
+four agents running, "op wants in" names none of them. Clicking still lands on
+that pane.
+
+Slack gets a copy only while you are away (display asleep, or someone driving the
+Mac over VNC). The dialog also takes a typed password, so over VNC it really is
+answerable, and a prompt that times out unseen has to be re-triggered by asking
+the agent to try again. Item titles reach a channel in that case and no other;
+`AGENT_NOTIFY_SLACK=false` silences it entirely.
+
+Every request is logged to `~/.agent-notify/1p-requests.log` (agent, pane, item),
+which answers "what did that prompt an hour ago want?" after the fact. Titles
+only; the script never sees a secret value.
 
 ## The pieces
 

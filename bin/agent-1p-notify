@@ -17,8 +17,7 @@
 #   pi:      { "agent": "pi", "command": "...", "session_name": "...",
 #              "cwd": "..." }
 #
-# Desktop only: a Touch ID prompt can only be answered at the machine, so a
-# Slack copy would be noise — and item names don't belong in a channel.
+# Desktop first, Slack only while away: see the Slack block below.
 
 # Hooks inherit the agent's PATH, which on a headless or sandboxed launch may not
 # have Homebrew on it; jq and tmux both live there.
@@ -81,7 +80,6 @@ pane="-"
 log="${AGENT_NOTIFY_1P_LOG:-$HOME/.agent-notify/1p-requests.log}"
 mkdir -p "$(dirname "$log")"
 printf '%s  %-6s  %-12s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$agent" "$pane" "$label" >> "$log"
-
 # The backend, normally a sibling of this script (both are symlinked into ~/bin
 # from the same checkout). AGENT_NOTIFY_BIN overrides, which is also how the
 # tests point it at a recorder.
@@ -95,8 +93,17 @@ fi
 # 1Password's own icon on the banner, so the thumbnail says which prompt is
 # waiting without reading a word of it. Explicitly set, which also stops
 # agent-notify substituting the question glyph for an "attention" event.
-export AGENT_NOTIFY_SLACK=false
 export AGENT_NOTIFY_IMAGE="${AGENT_NOTIFY_1P_IMAGE-/Applications/1Password.app/Contents/Resources/icon.icns}"
+
+# Slack only while away — display asleep, or someone driving this Mac over VNC.
+# A Touch ID prompt can only be answered at the machine, but the 1Password dialog
+# also takes a typed password, so over VNC it *is* answerable, and a prompt that
+# times out unseen has to be re-triggered by asking the agent to try again. Item
+# titles reach a channel only in that case, and never when you are sitting here
+# with the banner already on screen. Both knobs stay overridable, so
+# AGENT_NOTIFY_SLACK=false silences the channel copy entirely.
+export AGENT_NOTIFY_SLACK="${AGENT_NOTIFY_SLACK:-true}"
+export AGENT_NOTIFY_SLACK_AWAY_ONLY="${AGENT_NOTIFY_SLACK_AWAY_ONLY:-true}"
 
 if [[ "$agent" == "claude" ]]; then
     # Claude's path is unchanged: a {title,message} payload, whose session label
@@ -105,10 +112,22 @@ if [[ "$agent" == "claude" ]]; then
       '{title:"1Password unlock requested",message:$m}' | "$notify"
 else
     # Everyone else names their own session, because only Claude leaves a session
-    # file behind to find. "attention" rather than "settled": the agent is blocked
-    # on a dialog, not finished.
-    jq -nc --arg a "$agent" --arg m "1Password: $label" \
-        --arg name "$(echo "$json" | jq -r '.session_name // empty')" \
+    # file behind to find. Which *window* asked is the question a modal dialog
+    # cannot answer — with several agents running, "op wants in" names none of
+    # them — so the tmux coordinates ride along with the session name rather than
+    # being the fallback agent-notify uses when there is no name at all. Clicking
+    # the banner still lands on the pane; this is for deciding whether to approve
+    # before you get that far.
+    where=$(echo "$json" | jq -r '.session_name // empty')
+    if [[ -z "$where" ]]; then
+        cwd=$(echo "$json" | jq -r '.cwd // empty')
+        where="${cwd##*/}"
+    fi
+    [[ "$pane" != "-" ]] && where="${where:+$where · }$pane"
+
+    # "attention" rather than "settled": the agent is blocked on a dialog, not
+    # finished.
+    jq -nc --arg a "$agent" --arg m "1Password: $label" --arg name "$where" \
         --arg id "$(echo "$json" | jq -r '.session_id // empty')" \
         --arg cwd "$(echo "$json" | jq -r '.cwd // empty')" \
       '{version:1, agent:$a, event:"attention", session_id:$id, session_name:$name,
