@@ -50,7 +50,9 @@ AGENT_NOTIFY_PERMISSION="${AGENT_NOTIFY_PERMISSION:-false}"
 #                                 default: if the terminal is frontmost, showing the
 #                                 tab this pane's tmux window lives in, and the pane
 #                                 is the active one there, the notification is telling
-#                                 you what is already on your screen.
+#                                 you what is already on your screen. Same for a pane
+#                                 a tmux client with terminal focus is showing, which
+#                                 covers a screen that is not this one.
 AGENT_NOTIFY_WHEN_VISIBLE="${AGENT_NOTIFY_WHEN_VISIBLE:-false}"
 # Terminal app to raise when a desktop notification is clicked
 AGENT_NOTIFY_TERMINAL="${AGENT_NOTIFY_TERMINAL:-Ghostty}"
@@ -552,21 +554,30 @@ pane_watched_in_tmux() {
     return 1
 }
 
-# Whether to stay off Slack because the reply is already on somebody's screen.
-# Slack is the away channel, and away has one more shape than a dark display: at
-# the desk on the iPad, reading this same tmux over Blink. The pane is on top
-# there and the terminal says it has focus, so a Slack ping would be announcing
-# something being read as it arrives.
+# Whether the reply is already on somebody's screen. Not "on screen here" —
+# that is looking_at_target's narrower question, about this Mac's own frontmost
+# terminal — but on whichever screen is reading this pane, which may be an iPad
+# on the couch, or one two rooms away.
+#
+# Both callers want this and neither owns it: Slack because away has one more
+# shape than a dark display, and the banner because a screen someone is reading
+# does not need announcing to a Mac they are not at. The knob that turns each
+# one off stays with its caller.
 someone_is_watching() {
-    [[ "$AGENT_NOTIFY_SLACK_WHEN_WATCHED" == "true" ]] && return 1
-
     # Two hops, two questions, the same split looking_at_target makes: only the
     # far end can see its own tmux, and it answered before forwarding. What is
     # left here is our pane — the one holding the ssh — which is showing the
     # agent only if the far end said its own pane was on top.
-    [[ "$remote_watched" == "1" ]] && return 0
+    if [[ "$remote_watched" == "1" ]]; then
+        nlog "watched: the sender says somebody is reading its pane"
+        return 0
+    fi
     [[ -n "$remote_focus" && "$remote_visible" != "1" ]] && return 1
-    pane_watched_in_tmux
+    if pane_watched_in_tmux; then
+        nlog "watched: a client with terminal focus is showing this pane"
+        return 0
+    fi
+    return 1
 }
 
 # The terminal tab a pane shows through. Same tag tmux-focus clicks on:
@@ -585,6 +596,16 @@ looking_at_target() {
     local tag selected
 
     [[ "$AGENT_NOTIFY_WHEN_VISIBLE" == "true" ]] && return 1
+
+    # Somebody is reading this pane already, on some screen. That screen need
+    # not be attached to this Mac: a notification about a reply being read on an
+    # iPad becomes a banner nobody is there to dismiss, and they stack up until
+    # whoever it was walks back to the desk. A focused client is also a better
+    # answer than the tab hunt below, and a cheaper one — the terminal says it
+    # holds keyboard focus rather than us inferring it through Accessibility —
+    # so it gets asked first.
+    someone_is_watching && return 0
+
     command -v osascript >/dev/null 2>&1 || return 1
 
     # Two hops, two questions. The far end answered its own before forwarding —
@@ -741,7 +762,8 @@ send_notification() {
                 nlog "slack skipped, not away"
             fi
         fi
-        if [[ "$should_send" == "true" ]] && someone_is_watching; then
+        if [[ "$should_send" == "true" && "$AGENT_NOTIFY_SLACK_WHEN_WATCHED" != "true" ]] &&
+            someone_is_watching; then
             should_send=false
             nlog "slack skipped, pane is being read"
         fi

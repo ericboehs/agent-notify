@@ -206,6 +206,18 @@ assert_slack() {
   fi
 }
 
+# The stub notifier only writes its capture when it runs, so the file's absence
+# is the banner not being drawn.
+assert_banner() {
+  local want="$1" desc="$2" got=no
+  [[ -f "$CAPTURE" ]] && got=yes
+  if [[ "$got" == "$want" ]]; then
+    echo "PASS: $desc"; pass=$((pass + 1))
+  else
+    echo "FAIL: $desc (expected banner=$want, got banner=$got)"; fail=$((fail + 1))
+  fi
+}
+
 # One settled envelope from a pane in tmux, with the Slack path live. Extra
 # environment for the case goes in "$@".
 run_slack_event() {
@@ -569,6 +581,60 @@ stub_display 0
 stub_slack
 run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=true TMUX= TMUX_PANE=
 assert_slack yes "a pane the check cannot see anything about still posts"
+teardown
+
+# --- case 24: a banner is not drawn for a pane being read elsewhere --------
+# The Slack knob is not the banner's: turning Slack back on says nothing about
+# whether a Mac nobody is at should collect banners.
+setup
+stub_tmux_client 'attached,focused,UTF-8' /dev/ttys014
+stub_who /dev/ttys014 '(10.0.1.124)'
+stub_display 0
+stub_slack
+run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=true AGENT_NOTIFY_SLACK_WHEN_WATCHED=true
+assert_banner no "no banner for a pane an ssh client is reading"
+assert_slack yes "while the Slack knob still governs Slack alone"
+teardown
+
+# --- case 25: and the banner has its own way back ------------------------
+setup
+stub_tmux_client 'attached,focused,UTF-8' /dev/ttys014
+stub_who /dev/ttys014 '(10.0.1.124)'
+stub_display 0
+stub_slack
+run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=true AGENT_NOTIFY_WHEN_VISIBLE=true
+assert_banner yes "AGENT_NOTIFY_WHEN_VISIBLE draws it anyway"
+teardown
+
+# --- case 26: an unwatched pane still gets its banner --------------------
+setup
+stub_tmux_client 'attached,UTF-8' /dev/ttys014
+stub_who /dev/ttys014 '(10.0.1.124)'
+stub_display 0
+stub_slack
+run_slack_event AGENT_NOTIFY_SLACK_AWAY_ONLY=true
+assert_banner yes "a pane nobody has focused is still worth a banner"
+teardown
+
+# --- case 27: a forwarded notification the sender says is read ------------
+# The Mac is in another room; without this it collects a banner per turn for a
+# session being read on an iPad, and they are all waiting at the desk later.
+setup
+stub_display 0
+stub_slack
+printf '%s' '{"label":"coop:api","agent":"pi","app":"'"$APP_NAME"'","message":"hi","host":"coop","target":"%9","slack":"false","watched":"1"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 BOEHS_SLACK_NOTI_HOOK=hook \
+      TMUX= TMUX_PANE= "$NOTIFY" --recv >/dev/null 2>&1
+assert_banner no "a forwarded notification being read on the far end draws nothing"
+teardown
+
+setup
+stub_display 0
+stub_slack
+printf '%s' '{"label":"coop:api","agent":"pi","app":"'"$APP_NAME"'","message":"hi","host":"coop","target":"%9","slack":"false","watched":"0"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 BOEHS_SLACK_NOTI_HOOK=hook \
+      TMUX= TMUX_PANE= "$NOTIFY" --recv >/dev/null 2>&1
+assert_banner yes "and one nobody is reading still arrives"
 teardown
 
 echo
