@@ -14,6 +14,7 @@ import {
   clampForSlack,
   clampForBanner,
   findNotifier,
+  formatAskBody,
   notifierEnv,
   SLACK_MAX,
 } from "../extensions/pi-notify.ts";
@@ -160,4 +161,47 @@ test("findNotifier honours AGENT_NOTIFY_BIN when the path exists", () => {
     if (prev === undefined) delete process.env.AGENT_NOTIFY_BIN;
     else process.env.AGENT_NOTIFY_BIN = prev;
   }
+});
+
+test("formatAskBody shapes a single question like the Claude hook body", () => {
+  assert.equal(
+    formatAskBody({
+      question: "Which model?",
+      options: [
+        { label: "Opus", description: "biggest" },
+        { label: "Sonnet" },
+      ],
+    }),
+    "*Which model?*\n  1. Opus — biggest\n  2. Sonnet",
+  );
+});
+
+test("formatAskBody marks multiSelect and joins batch questions", () => {
+  assert.equal(
+    formatAskBody({
+      multiSelect: true,
+      question: "Pick any",
+      options: [{ label: "a" }],
+    }),
+    "*Pick any* (choose any)\n  1. a",
+  );
+  assert.equal(
+    formatAskBody({
+      questions: [
+        { question: "First?", options: [{ label: "x" }] },
+        { question: "Second?", options: [{ label: "y" }, { label: "z" }] },
+      ],
+    }),
+    "*First?*\n  1. x\n*Second?*\n  1. y\n  2. z",
+  );
+});
+
+test("formatAskBody yields empty for junk input", () => {
+  assert.equal(formatAskBody(null), "");
+  assert.equal(formatAskBody({}), "");
+  assert.equal(formatAskBody({ question: "  ", options: [] }), "");
+  assert.equal(
+    formatAskBody({ question: "Q?", options: [{ noLabel: 1 }] }),
+    "*Q?*",
+  );
 });

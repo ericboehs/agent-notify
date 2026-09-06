@@ -9,6 +9,10 @@
 //   - Announce on `agent_settled`, the authoritative terminal watermark that
 //     accounts for retries, compaction recovery, and queued follow-ups. Never
 //     `agent_end`.
+//   - Announce on `ui_prompt_start` (event "question"): a blocking prompt holds
+//     the turn open, so without this nothing fires until the user — who was
+//     never told — answers. The ask tool's `tool_call` args supply the question
+//     text; other prompts fall back to the event title.
 //   - Suppress while other work is still running by consulting the two systems
 //     Eric actually runs: pi-background-tasks (EventBus status) and pi-subagents
 //     (in-process RPC status). Either reporting active work silences the banner;
@@ -127,6 +131,40 @@ export function bodiesFor(text: string): { message: string; slackMessage: string
   const slack = clampForSlack(text);
   // No point shipping a duplicate when the reply was a single paragraph.
   return { message: banner, slackMessage: slack === banner ? "" : slack };
+}
+
+// Question + numbered options from the ask tool's input, shaped like the
+// Claude AskUserQuestion body the backend already renders: the banner strips
+// the *markers* while Slack keeps them. Handles both the single-question and
+// the batch (`questions[]`) forms; anything else yields "" and the caller
+// falls back to the prompt title.
+export function formatAskBody(input: unknown): string {
+  if (!isRecord(input)) return "";
+  const lines: string[] = [];
+  const push = (question: unknown, options: unknown, multi: unknown): void => {
+    if (typeof question !== "string" || !question.trim()) return;
+    lines.push(
+      `*${question.trim()}*${multi === true ? " (choose any)" : ""}`,
+    );
+    if (!Array.isArray(options)) return;
+    options.forEach((opt: unknown, i: number) => {
+      if (!isRecord(opt) || typeof opt.label !== "string") return;
+      const desc =
+        typeof opt.description === "string" && opt.description
+          ? ` — ${opt.description}`
+          : "";
+      lines.push(`  ${i + 1}. ${opt.label}${desc}`);
+    });
+  };
+  if (Array.isArray(input.questions)) {
+    for (const q of input.questions) {
+      if (!isRecord(q)) continue;
+      push(q.question, q.options, q.multiSelect);
+    }
+  } else {
+    push(input.question, input.options, input.multiSelect);
+  }
+  return lines.join("\n");
 }
 
 // Compute the environment overrides for the backend given the caller env. Kept
@@ -348,6 +386,9 @@ export default function (pi: ExtensionAPI): void {
   // waiting on at a terminal.
   let active = false;
   let lastAssistantText = "";
+  // The ask tool's question + options, captured at `tool_call` so the prompt
+  // handler can name the actual question. Consumed (cleared) on prompt.
+  let pendingAsk = "";
   let removeTerminalListener: (() => void) | undefined;
 
   pi.on("session_start", (_event, ctx) => {
@@ -380,6 +421,33 @@ export default function (pi: ExtensionAPI): void {
     });
   });
 
+  pi.on("tool_call", (event) => {
+    if (!active) return;
+    if (event.toolName !== "ask") return;
+    const body = formatAskBody(event.input);
+    if (body) pendingAsk = body;
+  });
+
+  // A blocking prompt holds the turn open waiting on an answer — without this,
+  // nothing announces until the user who was never told answers. Fires for
+  // ask, confirm, input, editor, and custom dialogs alike. Notification-only;
+  // pi does not await this, so announce directly with no background-task check
+  // (a question needs an answer regardless of what else is running).
+  pi.on("ui_prompt_start", (event, ctx) => {
+    if (!active) return;
+    const title = event.title;
+    const raw =
+      pendingAsk ||
+      (typeof title === "string" && title.trim() ? title.trim() : "");
+    pendingAsk = "";
+    const { message, slackMessage } = bodiesFor(raw);
+    emit(pi, ctx, {
+      event: "question",
+      message: message || "Pi is waiting on your answer.",
+      slackMessage,
+    });
+  });
+
   pi.on("message_end", (event) => {
     if (!active) return;
     const text = assistantText((event as { message?: unknown }).message);
@@ -394,6 +462,7 @@ export default function (pi: ExtensionAPI): void {
 
     const { message, slackMessage } = bodiesFor(lastAssistantText);
     lastAssistantText = "";
+    pendingAsk = "";
     emit(pi, ctx, { event: "settled", message, slackMessage });
   });
 
