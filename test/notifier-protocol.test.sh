@@ -12,6 +12,7 @@ set -u
 # backend reads that is still set out here is a leak: run the suite inside a
 # tmux pane and LC_AGENT_NOTIFY_PANE=%42 silently wins the precedence cases.
 unset LC_AGENT_NOTIFY_PANE LC_CLAUDE_PANE TMUX TMUX_PANE TMUX_FOCUS
+unset HERDR_ENV HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_SOCKET_PATH HERDR_BIN_PATH
 unset "${!AGENT_NOTIFY_@}"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -50,7 +51,7 @@ run_event() {
         AGENT_NOTIFY_FOREGROUND=1 \
         AGENT_NOTIFY_APP_NAME="$APP_NAME" \
         AGENT_NOTIFY_SLACK=false \
-        TMUX= TMUX_PANE= \
+        TMUX= TMUX_PANE= HERDR_ENV= HERDR_PANE_ID= HERDR_SOCKET_PATH= \
         "$NOTIFY" --event >/dev/null 2>&1
 }
 
@@ -63,7 +64,7 @@ run_hook() {
         AGENT_NOTIFY_FOREGROUND=1 \
         AGENT_NOTIFY_APP_NAME="$APP_NAME" \
         AGENT_NOTIFY_SLACK=false \
-        TMUX= TMUX_PANE= \
+        TMUX= TMUX_PANE= HERDR_ENV= HERDR_PANE_ID= HERDR_SOCKET_PATH= \
         "$NOTIFY" >/dev/null 2>&1
 }
 
@@ -255,6 +256,22 @@ printf '%s' '{"version":1,"agent":"pi","event":"settled","session_name":"api","m
       AGENT_NOTIFY_SLACK=false AGENT_NOTIFY_HOST=gfe TMUX= TMUX_PANE= \
       "$NOTIFY" --event >/dev/null 2>&1
 assert_pair -title "gfe:api" "AGENT_NOTIFY_HOST prefixes the label"
+teardown
+
+# --- case 4a: a Herdr pane gets a click-through action --------------------
+# Herdr's stable pane ID and session socket are inherited from the pane running
+# pi. The banner must preserve both so a later click reaches this exact Herdr
+# session and pane even after the user has switched tabs.
+setup
+printf '%s' '{"version":1,"agent":"pi","event":"settled","session_name":"api","message":"hi"}' | \
+  env HOME="$WORK" AGENT_NOTIFY_FOREGROUND=1 AGENT_NOTIFY_APP_NAME="$APP_NAME" \
+      AGENT_NOTIFY_SLACK=false TMUX= TMUX_PANE= HERDR_ENV=1 \
+      HERDR_PANE_ID=w8:p1 HERDR_SOCKET_PATH="$WORK/herdr.sock" \
+      "$NOTIFY" --event >/dev/null 2>&1
+herdr_action=$(printf '%q %q %q %q' "$REPO/bin/herdr-focus" w8:p1 \
+  "$WORK/herdr.sock" Ghostty)
+assert_pair -execute "$herdr_action" "a Herdr banner focuses its source pane when clicked"
+assert_pair -group "pi-w8:p1" "a Herdr pane is the notification group identity"
 teardown
 
 # --- case 4b: label_suffix ------------------------------------------------

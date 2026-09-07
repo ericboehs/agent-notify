@@ -2,8 +2,8 @@
 
 Desktop notifications for coding agents — [Claude Code](https://claude.com/claude-code)
 and [pi](https://pi.dev) — that know which pane they came from, so clicking a
-banner lands you on the tmux pane that sent it, even when that pane is on
-another machine.
+banner lands you on the Herdr or tmux pane that sent it. tmux targets can also
+span another machine.
 
 Claude Code supplies hooks for turns ending, blocking questions, and permission
 prompts; pi supplies lifecycle events when work settles. `agent-notify` turns
@@ -101,6 +101,26 @@ Pi banners post through `Pi Notify.app` and use a `pi-` notification group, so p
 and Claude notifications carry distinct icons and never replace each other on the
 same pane.
 
+## Herdr
+
+No additional agent configuration is needed inside Herdr. It injects
+`HERDR_PANE_ID` and `HERDR_SOCKET_PATH` into every managed pane; the backend
+captures those values when it posts a banner. Clicking runs `herdr-focus`, which
+asks that original Herdr session to focus the exact agent pane and then raises
+Ghostty. The stable pane ID survives tab and workspace switches.
+
+Notifications for the pane already selected in a frontmost Ghostty stay quiet,
+just as visible tmux panes do. Set `AGENT_NOTIFY_WHEN_VISIBLE=true` to override
+that behavior for a test.
+
+Herdr's own system delivery and agent-notify are independent and will both post
+while both are enabled. Once agent-notify is verified as the notification owner,
+avoid duplicates with:
+
+```toml
+[ui.toast]
+delivery = "off"
+```
 
 ## Naming the 1Password prompt
 
@@ -151,19 +171,20 @@ only; the script never sees a secret value.
 |---|---|
 | `bin/agent-notify` | Reads the hook payload, decides whether to post, routes it locally or over ssh |
 | `bin/agent-1p-notify` | Turns an `op` invocation into a banner naming the agent and the item it wants |
-| `bin/tmux-focus` | Spends the address a banner carries: selects the pane, its window, its tab |
+| `bin/tmux-focus` | Spends a tmux address: selects the pane, its window, and its Ghostty tab |
+| `bin/herdr-focus` | Spends a Herdr address: focuses the agent pane through its session socket |
 | `bin/agent-notify-app` | Builds `~/Applications/Claude Code Notify.app`, the bundle that can receive a click |
 
 ## What stays quiet
 
 Four things post nothing at all.
 
-**A pane you are already watching.** If the terminal is frontmost, showing the tab
-that pane's tmux window lives in, and the pane is the active one there, a banner
-would be describing the screen you are looking at. Every check has to agree before
-it stays quiet — a denied Accessibility grant, a sleeping display, or a pane on
-another machine all mean "cannot tell", which posts. `AGENT_NOTIFY_WHEN_VISIBLE=true`
-turns the suppression off.
+**A pane you are already watching.** If the terminal is frontmost and the source
+pane is selected in Herdr — or its tmux window and terminal tab are both selected
+— a banner would be describing the screen you are looking at. Every check has to
+agree before it stays quiet: a failed state lookup, denied Accessibility grant,
+sleeping display, or pane on another machine all mean "cannot tell", which posts.
+`AGENT_NOTIFY_WHEN_VISIBLE=true` turns the suppression off.
 
 A screen someone is reading counts even when it is not this one: a client with
 terminal focus showing the pane (below) suppresses the banner too, because a
@@ -445,7 +466,7 @@ rm ~/.agent-notify-debug        # stop
 
 - macOS on the machine that draws banners (the sending box can be anything with bash)
 - Claude Code
-- tmux, for click-through to a pane (and `focus-events on`, for the watched check)
+- Herdr or tmux for click-through to a pane (tmux also needs `focus-events on` for the watched check)
 - `jq`
 - Xcode command line tools (`xcrun swiftc`), to build the notifier app
 - `terminal-notifier`, as a fallback when the app bundle is missing

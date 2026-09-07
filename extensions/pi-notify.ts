@@ -2,8 +2,8 @@
 //
 // This is the pi-side producer for the agent-notify backend. It translates pi
 // lifecycle events into the canonical `agent-notify --event` envelope and lets
-// the proven shell/Swift backend own tmux targeting, visible-pane suppression,
-// SSH forwarding, Slack, macOS banners, and click-through to the origin pane.
+// the proven shell/Swift backend own Herdr/tmux targeting, visible-pane
+// suppression, SSH forwarding, Slack, macOS banners, and click-through.
 //
 // Design notes:
 //   - Announce on `agent_settled`, the authoritative terminal watermark that

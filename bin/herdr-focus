@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Focus a Herdr agent pane from a notification click, then raise its terminal.
+#
+# Usage: herdr-focus PANE [SOCKET] [APP]
+#
+# Herdr injects a stable pane ID and its session socket into every managed pane.
+# agent-notify captures both when the banner is posted; this helper spends them
+# later, from the notifier app's deliberately sparse environment.
+
+set -uo pipefail
+
+pane=${1:-}
+socket=${2:-}
+app=${3:-Ghostty}
+[ -n "$pane" ] || exit 0
+
+# Notification Center does not inherit an interactive shell's PATH.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+
+NOTIFY_DEBUG="$HOME/.agent-notify-debug"
+hlog() { [ -e "$NOTIFY_DEBUG" ] && echo "$(date '+%H:%M:%S') herdr-focus $*" >> "$NOTIFY_DEBUG"; return 0; }
+hlog "click pane=$pane socket=${socket:-default} app=$app"
+
+[ -n "$socket" ] && export HERDR_SOCKET_PATH="$socket"
+export HERDR_ENV=1
+
+herdr_bin=${HERDR_BIN_PATH:-}
+[ -n "$herdr_bin" ] || herdr_bin=$(command -v herdr 2>/dev/null || true)
+if [ -z "$herdr_bin" ]; then
+  hlog "herdr not found"
+  exit 0
+fi
+
+focus_out=$(mktemp -t herdr-focus)
+if "$herdr_bin" agent focus "$pane" >"$focus_out" 2>&1; then
+  hlog "focused pane=$pane result=$(tr '\n' ' ' < "$focus_out")"
+  rm -f "$focus_out"
+  command -v open >/dev/null 2>&1 && open -a "$app"
+else
+  rc=$?
+  hlog "focus failed pane=$pane rc=$rc result=$(tr '\n' ' ' < "$focus_out")"
+  rm -f "$focus_out"
+fi

@@ -2,18 +2,19 @@
   "name": "agent-notify",
   "version": "0.1.0",
   "type": "module",
-  "description": "Desktop and Slack notifications for coding agents (Claude Code hooks + pi lifecycle events) with tmux pane targeting, visible-pane suppression, SSH forwarding, and click-through.",
+  "description": "Desktop and Slack notifications for coding agents (Claude Code hooks + pi lifecycle events) with Herdr/tmux pane targeting, visible-pane suppression, SSH forwarding, and click-through.",
   "keywords": [
     "pi-package",
     "claude-code",
     "notifications",
+    "herdr",
     "tmux",
     "slack"
   ],
   "license": "MIT",
   "author": "Eric Boehs",
   "scripts": {
-    "test": "node --test test/*.test.ts && bash test/notifier-protocol.test.sh && bash test/onepassword.test.sh",
+    "test": "node --test test/*.test.ts && bash test/notifier-protocol.test.sh && bash test/herdr-focus.test.sh && bash test/onepassword.test.sh",
     "lint": "bash test/lint.sh"
   },
   "repository": {

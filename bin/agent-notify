@@ -69,9 +69,13 @@ AGENT_NOTIFY_TERMINAL="${AGENT_NOTIFY_TERMINAL:-Ghostty}"
 AGENT_NOTIFY_IMAGE_SET="${AGENT_NOTIFY_IMAGE+1}"
 AGENT_NOTIFY_IMAGE="${AGENT_NOTIFY_IMAGE-/Applications/Claude.app/Contents/Resources/electron.icns}"
 
-# Resolve tmux-focus alongside this script; the notification click action runs
-# with a bare PATH, and this file is normally reached through a ~/bin symlink.
-TMUX_FOCUS=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/tmux-focus
+# Resolve focus helpers alongside this script; the notification click action
+# runs with a bare PATH, and this file is normally reached through a ~/bin
+# symlink. Herdr gets its own helper because selecting one of its panes is a
+# socket API operation, not a Ghostty tab click.
+SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
+TMUX_FOCUS="$SCRIPT_DIR/tmux-focus"
+HERDR_FOCUS="$SCRIPT_DIR/herdr-focus"
 
 # macOS draws the banner's icon and name from the bundle that posted it, so
 # posting through our own app (built by agent-notify-app, carrying the
@@ -291,15 +295,23 @@ else
     tmux_info="Session"
 fi
 
-# Keep the raw tmux target for the notification click action, separate from
-# whatever the banner ends up calling this pane. Empty means "not in tmux", so
-# there is nothing to click through to.
+# Keep raw multiplexer targets for the notification click action, separate from
+# whatever the banner ends up calling this pane. Both tmux and Herdr inject a
+# stable pane ID into the agent's environment. Herdr wins when nested: it is the
+# outer UI the click must bring to the front, while ordinary Herdr use has no
+# tmux target at all.
 #
-# The pane id, not the coordinates: with renumber-windows on, closing any window
-# shifts every index after it, so "code:6.0" baked in when the hook fired can
-# belong to a different window — or to nothing — by the time the banner is
-# clicked. A %id names the same pane for as long as it lives.
+# For tmux use the pane id, not coordinates: with renumber-windows on, closing
+# any window shifts every index after it, so "code:6.0" baked in when the hook
+# fired can belong to a different window — or to nothing — by click time.
 tmux_target="$tmux_pane_id"
+herdr_target=""
+herdr_socket=""
+if [[ "${HERDR_ENV:-}" == "1" && -n "${HERDR_PANE_ID:-}" ]]; then
+    herdr_target="$HERDR_PANE_ID"
+    herdr_socket="${HERDR_SOCKET_PATH:-}"
+fi
+focus_target="${herdr_target:-$tmux_target}"
 
 # Append a caller-supplied qualifier to a label, unless it is already in there.
 # Used by both label paths (hook and --event), so the rule lives in one place.
@@ -592,10 +604,36 @@ tab_tag() {
     tmux display-message -p -t "$tmux_target" "$fmt" 2>/dev/null
 }
 
+# Herdr already knows which pane its attached UI is showing. The pane ID came
+# from this agent's inherited context, while the snapshot comes from that same
+# session socket, so this never confuses the selected pane with the calling one.
+# It answers only the Herdr half of visibility; looking_at_target still requires
+# Ghostty itself to be frontmost before suppressing a banner.
+pane_selected_in_herdr() {
+    local snapshot
+
+    [[ -n "$herdr_target" ]] && command -v herdr >/dev/null 2>&1 || return 1
+    snapshot=$(herdr api snapshot 2>/dev/null) || return 1
+    printf '%s' "$snapshot" | jq -e --arg pane "$herdr_target" \
+        '.result.snapshot.focused_pane_id == $pane' >/dev/null 2>&1
+}
+
 looking_at_target() {
     local tag selected
 
     [[ "$AGENT_NOTIFY_WHEN_VISIBLE" == "true" ]] && return 1
+
+    # Herdr multiplexes inside one terminal surface, so there is no macOS tab to
+    # inspect. Its snapshot identifies the selected pane; the frontmost-process
+    # check makes sure the user is actually looking at that surface rather than
+    # another application.
+    if [[ -n "$herdr_target" ]]; then
+        pane_selected_in_herdr || return 1
+        is_display_asleep && return 1
+        selected=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null) || return 1
+        [[ "$selected" == "$AGENT_NOTIFY_TERMINAL" ]]
+        return
+    fi
 
     # Somebody is reading this pane already, on some screen. That screen need
     # not be attached to this Mac: a notification about a reply being read on an
@@ -726,8 +764,13 @@ send_notification() {
     # is the natural identity when there is one; without it fall back to the
     # label, which names the session. Two sessions outside tmux on the same box
     # used to land on the same empty-pane group and quietly overwrite each other.
-    notifier_args+=(-group "${notify_group:-claude-${tmux_target:-$label}}")
-    if [[ -n "$tmux_target" ]]; then
+    notifier_args+=(-group "${notify_group:-claude-${focus_target:-$label}}")
+    if [[ -n "$herdr_target" ]]; then
+        notifier_args+=(
+            -execute "$(printf '%q %q %q %q' "$HERDR_FOCUS" "$herdr_target" \
+                "$herdr_socket" "$AGENT_NOTIFY_TERMINAL")"
+        )
+    elif [[ -n "$tmux_target" ]]; then
         notifier_args+=(
             -execute "$(printf '%q %q %q %q' "$TMUX_FOCUS" "$tmux_target" \
                 "$AGENT_NOTIFY_TERMINAL" "$remote_focus")"
@@ -808,7 +851,7 @@ if [[ -n "$event" ]]; then
     header="${AGENT_NOTIFY_EMOJI:-:robot_face:} $label"
     # Key pi banners separately from Claude's so the two agents' notifications
     # replace within their own agent but never clobber each other on one pane.
-    notify_group="pi-${tmux_target:-$label}"
+    notify_group="pi-${focus_target:-$label}"
     subtitle=$(echo "$json" | jq -r '.subtitle // empty')
     body=$(echo "$json" | jq -r '.message // empty')
     [[ -z "$body" ]] && body="Ready for further instruction."
